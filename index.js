@@ -333,6 +333,55 @@ app.post('/soporte/cambio-clave', async (req, res) => {
 });
 
 // ────────────────────────────────────────
+// ASIGNAR A SOPORTE_CLIENTES
+// ────────────────────────────────────────
+app.post('/soporte/asignar', async (req, res) => {
+  try {
+    const { conversation_id, problema } = req.body;
+
+    const problemas = {
+      'sin_internet': '🔴 SIN CONEXIÓN A INTERNET',
+      'lento': '🐌 INTERNET LENTO',
+      'intermitente': '⚡ CONEXIÓN INTERMITENTE',
+      'otro': '📝 OTRO PROBLEMA'
+    };
+
+    const descripcion = problemas[problema] || problema;
+
+    // 1. Crear nota interna
+    await fetch(`https://app.mercately.com/api/v1/conversations/${conversation_id}/notes`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Api-Key': 'fcd5dc53edc8a086d82751c112e1f6ce'
+      },
+      body: JSON.stringify({
+        content: `⚠️ REPORTE TÉCNICO\nProblema: ${descripcion}\nCliente requiere atención técnica.`
+      })
+    });
+
+    // 2. Asignar al equipo Soporte_Clientes
+    await fetch(`https://app.mercately.com/api/v1/conversations/${conversation_id}/assignments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Api-Key': 'fcd5dc53edc8a086d82751c112e1f6ce'
+      },
+      body: JSON.stringify({
+        team_id: '1636619a3d94404'
+      })
+    });
+
+    res.json({
+      ok: true,
+      mensaje: '✅ Reporte enviado al equipo técnico.'
+    });
+
+  } catch (err) {
+    res.status(500).json({ ok: false, mensaje: '⚠️ Error al asignar.' });
+  }
+});
+// ────────────────────────────────────────
 // DESPEDIDA
 // ────────────────────────────────────────
 app.get('/despedida', (req, res) => {
