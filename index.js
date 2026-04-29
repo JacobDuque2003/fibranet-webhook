@@ -14,6 +14,9 @@ const GOOGLE_CREDENTIALS = {
   private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
 };
 
+// Memoria del último ping de Mercately
+let ultimoPingMercately = null;
+
 const CUENTAS_BANCARIAS = `💳 *Cuentas bancarias FibraNet:*
 
 🏦 *BANCO DE LOJA*
@@ -56,13 +59,22 @@ function getGoogleAuth(scopes) {
   );
 }
 
+// ── MIDDLEWARE: Registrar pings de Mercately ──
+app.use((req, res, next) => {
+  // Si la petición viene de Mercately (a endpoints de cliente), registramos el ping
+  const rutasMercately = ['/cliente/buscar', '/cliente/deuda', '/cliente/plan', '/pago/info', '/pago/comprobante', '/soporte/reporte', '/soporte/cambio-clave'];
+  if (rutasMercately.some(r => req.path === r)) {
+    ultimoPingMercately = new Date();
+  }
+  next();
+});
+
 // ── OCR CON GOOGLE VISION ──
 async function leerComprobante(imageUrl) {
   try {
     const auth = getGoogleAuth(['https://www.googleapis.com/auth/cloud-vision']);
     const token = await auth.getAccessToken();
 
-    // Descargar imagen y convertir a base64
     const imgResponse = await fetch(imageUrl);
     const buffer = await imgResponse.buffer();
     const base64 = buffer.toString('base64');
@@ -87,7 +99,6 @@ async function leerComprobante(imageUrl) {
     const visionData = await visionResponse.json();
     const textoCompleto = visionData.responses?.[0]?.fullTextAnnotation?.text || '';
 
-    // Extraer datos del comprobante
     const datos = extraerDatosComprobante(textoCompleto);
     return { exito: true, texto: textoCompleto, datos };
   } catch (err) {
@@ -100,7 +111,6 @@ async function leerComprobante(imageUrl) {
 function extraerDatosComprobante(texto) {
   const textoUpper = texto.toUpperCase();
 
-  // Extraer monto
   const montoPatterns = [
     /\$\s*(\d+[.,]\d{2})/,
     /MONTO[:\s]+\$?\s*(\d+[.,]\d{2})/i,
@@ -117,7 +127,6 @@ function extraerDatosComprobante(texto) {
     }
   }
 
-  // Extraer número de comprobante
   const comprobantePattterns = [
     /(?:comprobante|referencia|transacci[oó]n|n[uú]mero|nro)[:\s#]+(\w+)/i,
     /(?:TRX|TXN|REF|OP)[:\s#-]*(\d+)/i,
@@ -129,13 +138,9 @@ function extraerDatosComprobante(texto) {
     if (match) { comprobante = match[1]; break; }
   }
 
-  // Detectar si fue exitosa
   const exitosa = /exitosa|exitoso|aprobado|aprobada|success|realizada|completada|confirmada|\u2713|llegó/i.test(texto);
-
-  // Detectar beneficiario FibraNet
   const esFibranet = /tapia|fibranet|oscar|aldo|andrea|duque|soledad/i.test(texto);
 
-  // Detectar banco
   let banco = 'Desconocido';
   if (/pichincha/i.test(texto)) banco = 'Banco Pichincha';
   else if (/loja/i.test(texto)) banco = 'Banco de Loja';
@@ -175,8 +180,414 @@ async function subirImagenDrive(imageUrl, nombre, cedula, comprobante) {
   }
 }
 
+// ════════════════════════════════════════════════════════
+// FUNCIONES DE VERIFICACIÓN PARA HEALTH CHECK
+// ════════════════════════════════════════════════════════
+
+// Verificar MikroWisp
+async function verificarMikroWisp() {
+  const inicio = Date.now();
+  try {
+    const response = await fetch(`${MIKROWISP_URL}/api/v1/GetClientsDetails`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: MIKROWISP_TOKEN, limit: 1 })
+    });
+    const tiempo = Date.now() - inicio;
+    const data = await response.json();
+
+    if (response.ok && data.estado) {
+      return {
+        estado: 'ok',
+        mensaje: `API respondió correctamente`,
+        tiempo_respuesta_ms: tiempo,
+        url: MIKROWISP_URL
+      };
+    } else {
+      return {
+        estado: 'error',
+        mensaje: 'API respondió pero con error',
+        tiempo_respuesta_ms: tiempo,
+        detalle: data
+      };
+    }
+  } catch (err) {
+    return {
+      estado: 'error',
+      mensaje: 'No se pudo conectar a MikroWisp',
+      error: err.message,
+      tiempo_respuesta_ms: Date.now() - inicio
+    };
+  }
+}
+
+// Verificar Google Drive
+async function verificarGoogleDrive() {
+  const inicio = Date.now();
+  try {
+    if (!process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+      return {
+        estado: 'error',
+        mensaje: 'Variables de entorno faltantes (GOOGLE_CLIENT_EMAIL o GOOGLE_PRIVATE_KEY)'
+      };
+    }
+
+    const auth = getGoogleAuth(['https://www.googleapis.com/auth/drive']);
+    const drive = google.drive({ version: 'v3', auth });
+
+    const result = await drive.files.get({
+      fileId: DRIVE_FOLDER_ID,
+      fields: 'id, name'
+    });
+
+    return {
+      estado: 'ok',
+      mensaje: `Carpeta accesible: "${result.data.name}"`,
+      tiempo_respuesta_ms: Date.now() - inicio,
+      carpeta_id: DRIVE_FOLDER_ID
+    };
+  } catch (err) {
+    return {
+      estado: 'error',
+      mensaje: 'No se pudo acceder a Google Drive',
+      error: err.message,
+      tiempo_respuesta_ms: Date.now() - inicio
+    };
+  }
+}
+
+// Verificar Google Vision
+async function verificarGoogleVision() {
+  const inicio = Date.now();
+  try {
+    if (!process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+      return {
+        estado: 'error',
+        mensaje: 'Variables de entorno faltantes'
+      };
+    }
+
+    const auth = getGoogleAuth(['https://www.googleapis.com/auth/cloud-vision']);
+    const token = await auth.getAccessToken();
+
+    if (token && token.token) {
+      return {
+        estado: 'ok',
+        mensaje: 'API autenticada correctamente',
+        tiempo_respuesta_ms: Date.now() - inicio
+      };
+    } else {
+      return {
+        estado: 'error',
+        mensaje: 'No se obtuvo token de acceso'
+      };
+    }
+  } catch (err) {
+    return {
+      estado: 'error',
+      mensaje: 'No se pudo autenticar con Google Vision',
+      error: err.message,
+      tiempo_respuesta_ms: Date.now() - inicio
+    };
+  }
+}
+
+// Verificar Mercately (basado en último ping recibido)
+function verificarMercately() {
+  if (!ultimoPingMercately) {
+    return {
+      estado: 'desconocido',
+      mensaje: 'Aún no se ha recibido ningún ping de Mercately desde que el servidor arrancó',
+      ultimo_ping: null
+    };
+  }
+
+  const ahora = new Date();
+  const minutosTranscurridos = Math.floor((ahora - ultimoPingMercately) / 60000);
+
+  if (minutosTranscurridos < 60) {
+    return {
+      estado: 'ok',
+      mensaje: `Último ping recibido hace ${minutosTranscurridos} minuto(s)`,
+      ultimo_ping: ultimoPingMercately.toISOString(),
+      minutos_transcurridos: minutosTranscurridos
+    };
+  } else if (minutosTranscurridos < 360) {
+    return {
+      estado: 'advertencia',
+      mensaje: `Último ping hace ${Math.floor(minutosTranscurridos / 60)} hora(s) - revisa si Mercately está activo`,
+      ultimo_ping: ultimoPingMercately.toISOString(),
+      minutos_transcurridos: minutosTranscurridos
+    };
+  } else {
+    return {
+      estado: 'error',
+      mensaje: `Sin pings hace más de 6 horas - posible desconexión`,
+      ultimo_ping: ultimoPingMercately.toISOString(),
+      minutos_transcurridos: minutosTranscurridos
+    };
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// ENDPOINT /health - JSON TÉCNICO
+// ════════════════════════════════════════════════════════
+app.get('/health', async (req, res) => {
+  const inicio = Date.now();
+
+  const [mikrowisp, drive, vision] = await Promise.all([
+    verificarMikroWisp(),
+    verificarGoogleDrive(),
+    verificarGoogleVision()
+  ]);
+
+  const mercately = verificarMercately();
+
+  const todos_ok =
+    mikrowisp.estado === 'ok' &&
+    drive.estado === 'ok' &&
+    vision.estado === 'ok' &&
+    (mercately.estado === 'ok' || mercately.estado === 'desconocido');
+
+  res.json({
+    estado_general: todos_ok ? '✅ TODO OPERATIVO' : '⚠️ HAY PROBLEMAS',
+    timestamp: new Date().toISOString(),
+    tiempo_total_ms: Date.now() - inicio,
+    servicios: {
+      railway: {
+        estado: 'ok',
+        mensaje: 'Servidor v5.0 funcionando',
+        version: '5.0',
+        node: process.version,
+        uptime_segundos: Math.floor(process.uptime())
+      },
+      mikrowisp,
+      google_drive: drive,
+      google_vision: vision,
+      mercately
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════
+// ENDPOINT /status - DASHBOARD HTML VISUAL
+// ════════════════════════════════════════════════════════
+app.get('/status', async (req, res) => {
+  const [mikrowisp, drive, vision] = await Promise.all([
+    verificarMikroWisp(),
+    verificarGoogleDrive(),
+    verificarGoogleVision()
+  ]);
+
+  const mercately = verificarMercately();
+  const railway = { estado: 'ok', mensaje: `v5.0 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
+
+  const todos_ok =
+    mikrowisp.estado === 'ok' &&
+    drive.estado === 'ok' &&
+    vision.estado === 'ok' &&
+    (mercately.estado === 'ok' || mercately.estado === 'desconocido');
+
+  const colorEstado = (estado) => {
+    if (estado === 'ok') return '#22c55e';
+    if (estado === 'advertencia') return '#f59e0b';
+    if (estado === 'desconocido') return '#6b7280';
+    return '#ef4444';
+  };
+
+  const iconoEstado = (estado) => {
+    if (estado === 'ok') return '🟢';
+    if (estado === 'advertencia') return '🟡';
+    if (estado === 'desconocido') return '⚪';
+    return '🔴';
+  };
+
+  const tiempoLocal = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil' });
+
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="refresh" content="30">
+<title>FibraNet · Estado del Sistema</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #f1f5f9;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container { max-width: 800px; margin: 0 auto; }
+  .header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 30px 20px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .logo { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+  .logo span { color: #60a5fa; }
+  .subtitle { color: #94a3b8; font-size: 14px; }
+  .estado-general {
+    margin-top: 16px;
+    padding: 12px 24px;
+    border-radius: 999px;
+    display: inline-block;
+    font-weight: 600;
+    background: ${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};
+    color: ${todos_ok ? '#22c55e' : '#ef4444'};
+    border: 1px solid ${todos_ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};
+  }
+  .servicios { display: grid; gap: 16px; }
+  .servicio {
+    background: rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+    transition: transform 0.2s;
+  }
+  .servicio:hover { transform: translateY(-2px); }
+  .servicio-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .servicio-nombre { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+  .servicio-icono { font-size: 24px; }
+  .servicio-mensaje { color: #cbd5e1; font-size: 14px; margin-top: 8px; }
+  .servicio-detalle { color: #64748b; font-size: 12px; margin-top: 6px; }
+  .badge {
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .footer {
+    text-align: center;
+    margin-top: 30px;
+    color: #64748b;
+    font-size: 13px;
+  }
+  .footer a { color: #60a5fa; text-decoration: none; }
+  .auto-refresh {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 4px 12px;
+    background: rgba(96,165,250,0.1);
+    border-radius: 999px;
+    font-size: 11px;
+    color: #60a5fa;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">📡 Fibra<span>Net</span></div>
+      <div class="subtitle">Panel de Estado del Sistema</div>
+      <div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR SERVICIOS'}</div>
+    </div>
+
+    <div class="servicios">
+
+      <div class="servicio" style="border-left: 4px solid ${colorEstado(railway.estado)}">
+        <div class="servicio-header">
+          <div class="servicio-nombre">
+            <span class="servicio-icono">🚂</span>
+            Railway (Servidor)
+          </div>
+          <span class="badge" style="background: ${colorEstado(railway.estado)}20; color: ${colorEstado(railway.estado)}">
+            ${iconoEstado(railway.estado)} ${railway.estado.toUpperCase()}
+          </span>
+        </div>
+        <div class="servicio-mensaje">${railway.mensaje}</div>
+        <div class="servicio-detalle">Node ${process.version} · Puerto ${process.env.PORT || 3000}</div>
+      </div>
+
+      <div class="servicio" style="border-left: 4px solid ${colorEstado(mikrowisp.estado)}">
+        <div class="servicio-header">
+          <div class="servicio-nombre">
+            <span class="servicio-icono">🌐</span>
+            MikroWisp (ISP)
+          </div>
+          <span class="badge" style="background: ${colorEstado(mikrowisp.estado)}20; color: ${colorEstado(mikrowisp.estado)}">
+            ${iconoEstado(mikrowisp.estado)} ${mikrowisp.estado.toUpperCase()}
+          </span>
+        </div>
+        <div class="servicio-mensaje">${mikrowisp.mensaje}</div>
+        ${mikrowisp.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${mikrowisp.tiempo_respuesta_ms}ms · ${MIKROWISP_URL}</div>` : ''}
+        ${mikrowisp.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${mikrowisp.error}</div>` : ''}
+      </div>
+
+      <div class="servicio" style="border-left: 4px solid ${colorEstado(drive.estado)}">
+        <div class="servicio-header">
+          <div class="servicio-nombre">
+            <span class="servicio-icono">📁</span>
+            Google Drive
+          </div>
+          <span class="badge" style="background: ${colorEstado(drive.estado)}20; color: ${colorEstado(drive.estado)}">
+            ${iconoEstado(drive.estado)} ${drive.estado.toUpperCase()}
+          </span>
+        </div>
+        <div class="servicio-mensaje">${drive.mensaje}</div>
+        ${drive.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${drive.tiempo_respuesta_ms}ms</div>` : ''}
+        ${drive.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${drive.error}</div>` : ''}
+      </div>
+
+      <div class="servicio" style="border-left: 4px solid ${colorEstado(vision.estado)}">
+        <div class="servicio-header">
+          <div class="servicio-nombre">
+            <span class="servicio-icono">👁️</span>
+            Google Vision (OCR)
+          </div>
+          <span class="badge" style="background: ${colorEstado(vision.estado)}20; color: ${colorEstado(vision.estado)}">
+            ${iconoEstado(vision.estado)} ${vision.estado.toUpperCase()}
+          </span>
+        </div>
+        <div class="servicio-mensaje">${vision.mensaje}</div>
+        ${vision.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${vision.tiempo_respuesta_ms}ms</div>` : ''}
+        ${vision.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${vision.error}</div>` : ''}
+      </div>
+
+      <div class="servicio" style="border-left: 4px solid ${colorEstado(mercately.estado)}">
+        <div class="servicio-header">
+          <div class="servicio-nombre">
+            <span class="servicio-icono">💬</span>
+            Mercately (Chatbot)
+          </div>
+          <span class="badge" style="background: ${colorEstado(mercately.estado)}20; color: ${colorEstado(mercately.estado)}">
+            ${iconoEstado(mercately.estado)} ${mercately.estado.toUpperCase()}
+          </span>
+        </div>
+        <div class="servicio-mensaje">${mercately.mensaje}</div>
+        ${mercately.ultimo_ping ? `<div class="servicio-detalle">Último contacto: ${new Date(mercately.ultimo_ping).toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>` : ''}
+      </div>
+
+    </div>
+
+    <div class="footer">
+      <div>📍 Zamora, Ecuador · ${tiempoLocal}</div>
+      <div class="auto-refresh">🔄 Auto-actualización cada 30 segundos</div>
+      <div style="margin-top: 12px;">
+        <a href="/health">Ver JSON técnico (/health)</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
 // ────────────────────────────────────────
-// HEALTH CHECK
+// HEALTH CHECK ORIGINAL (no se toca)
 // ────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({ estado: 'FibraNet Webhook activo ✅', version: '5.0' });
@@ -278,7 +689,6 @@ app.post('/pago/comprobante', async (req, res) => {
       return res.json({ activado: false, mensaje: '📸 Por favor envía una *foto clara* del comprobante de transferencia.' });
     }
 
-    // 1. Obtener deuda del cliente
     const clienteResponse = await fetch(`${MIKROWISP_URL}/api/v1/GetClientsDetails`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: MIKROWISP_TOKEN, idcliente })
@@ -287,7 +697,6 @@ app.post('/pago/comprobante', async (req, res) => {
     const cliente = clienteData.datos?.[0];
     const deuda = parseFloat(cliente?.facturacion?.total_facturas || 0);
 
-    // 2. Obtener factura pendiente
     const facturasResponse = await fetch(`${MIKROWISP_URL}/api/v1/GetInvoices`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: MIKROWISP_TOKEN, idcliente, estado: 'no pagada' })
@@ -296,7 +705,6 @@ app.post('/pago/comprobante', async (req, res) => {
     const facturas = facturasData.facturas || [];
     const facturaPendiente = facturas.find(f => f.estado !== 'pagado');
 
-    // 3. Leer comprobante con OCR
     const ocr = await leerComprobante(imagen_url);
 
     if (!ocr.exito) {
@@ -305,7 +713,6 @@ app.post('/pago/comprobante', async (req, res) => {
 
     const { monto, comprobante, exitosa, esFibranet, banco } = ocr.datos;
 
-    // 4. Validaciones
     if (!exitosa) {
       return res.json({ activado: false, mensaje: '❌ La transferencia no aparece como exitosa en el comprobante.\n\nVerifica que la transferencia fue aprobada e intenta de nuevo.' });
     }
@@ -318,11 +725,7 @@ app.post('/pago/comprobante', async (req, res) => {
       return res.json({ activado: false, mensaje: '⚠️ No pude leer el monto del comprobante. Por favor envía una foto más clara. 📸' });
     }
 
-    const diferencia = Math.abs(monto - deuda);
-
-    // Pago menor
     if (monto < deuda - 0.10) {
-      // Guardar imagen de todas formas
       await subirImagenDrive(imagen_url, nombre || 'cliente', cedula || 'sin-cedula', comprobante || Date.now());
       return res.json({
         activado: false,
@@ -330,10 +733,8 @@ app.post('/pago/comprobante', async (req, res) => {
       });
     }
 
-    // 5. Guardar imagen en Drive
     const drive = await subirImagenDrive(imagen_url, nombre || 'cliente', cedula || 'sin-cedula', comprobante || Date.now());
 
-    // 6. Activar en MikroWisp si hay factura pendiente
     if (facturaPendiente) {
       const pagoResponse = await fetch(`${MIKROWISP_URL}/api/v1/PaidInvoice`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -362,7 +763,6 @@ app.post('/pago/comprobante', async (req, res) => {
       }
     }
 
-    // Si no hay factura o falló MikroWisp → pendiente de revisión
     return res.json({
       activado: false,
       mensaje: `✅ Comprobante recibido y guardado.\n\n🔑 Ref: #${comprobante || 'N/A'}\n💵 Monto: $${monto.toFixed(2)}\n\nUn asesor verificará y activará tu servicio en breve. ⏰`
@@ -444,4 +844,4 @@ app.get('/despedida', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.0 corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.1 corriendo en puerto ${PORT}`));
