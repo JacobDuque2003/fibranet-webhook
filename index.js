@@ -17,22 +17,17 @@ const GOOGLE_CREDENTIALS = {
 let ultimoPingMercately = null;
 
 // ════════════════════════════════════════════════════════
-// 🎓 NUEVO EN v5.2: FUNCIÓN PARA CAPITALIZAR NOMBRES
+// FUNCIÓN: Capitalizar nombres
 // ════════════════════════════════════════════════════════
-// Convierte "JACOB DUQUE LOPEZ" → "Jacob Duque Lopez"
-// Convierte "maría josé pérez" → "María José Pérez"
 function capitalizarNombre(nombre) {
   if (!nombre || typeof nombre !== 'string') return '';
-
   return nombre
-    .trim()                        // Quita espacios al inicio y final
-    .toLowerCase()                 // Todo a minúsculas: "jacob duque"
-    .split(/\s+/)                  // Divide por espacios: ["jacob", "duque"]
-    .filter(palabra => palabra)    // Quita palabras vacías
-    .map(palabra => {              // Por cada palabra...
-      return palabra.charAt(0).toUpperCase() + palabra.slice(1);
-    })
-    .join(' ');                    // Une de nuevo: "Jacob Duque"
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(palabra => palabra)
+    .map(palabra => palabra.charAt(0).toUpperCase() + palabra.slice(1))
+    .join(' ');
 }
 
 const CUENTAS_BANCARIAS = `💳 *Cuentas bancarias FibraNet:*
@@ -88,31 +83,20 @@ async function leerComprobante(imageUrl) {
   try {
     const auth = getGoogleAuth(['https://www.googleapis.com/auth/cloud-vision']);
     const token = await auth.getAccessToken();
-
     const imgResponse = await fetch(imageUrl);
     const buffer = await imgResponse.buffer();
     const base64 = buffer.toString('base64');
 
-    const visionResponse = await fetch(
-      'https://vision.googleapis.com/v1/images:annotate',
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          requests: [{
-            image: { content: base64 },
-            features: [{ type: 'TEXT_DETECTION', maxResults: 1 }]
-          }]
-        })
-      }
-    );
+    const visionResponse = await fetch('https://vision.googleapis.com/v1/images:annotate', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [{ image: { content: base64 }, features: [{ type: 'TEXT_DETECTION', maxResults: 1 }] }]
+      })
+    });
 
     const visionData = await visionResponse.json();
     const textoCompleto = visionData.responses?.[0]?.fullTextAnnotation?.text || '';
-
     const datos = extraerDatosComprobante(textoCompleto);
     return { exito: true, texto: textoCompleto, datos };
   } catch (err) {
@@ -132,10 +116,7 @@ function extraerDatosComprobante(texto) {
   let monto = null;
   for (const pattern of montoPatterns) {
     const match = texto.match(pattern);
-    if (match) {
-      monto = parseFloat(match[1].replace(',', '.'));
-      break;
-    }
+    if (match) { monto = parseFloat(match[1].replace(',', '.')); break; }
   }
 
   const comprobantePattterns = [
@@ -171,7 +152,6 @@ async function subirImagenDrive(imageUrl, nombre, cedula, comprobante) {
     const drive = google.drive({ version: 'v3', auth });
     const fecha = new Date().toISOString().slice(0, 10);
     const nombreArchivo = `${fecha}_${nombre.replace(/\s+/g, '-')}_${cedula}_${comprobante || Date.now()}.jpg`;
-
     const imgResponse = await fetch(imageUrl);
     const buffer = await imgResponse.buffer();
     const { Readable } = require('stream');
@@ -204,7 +184,6 @@ async function verificarMikroWisp() {
     });
     const tiempo = Date.now() - inicio;
     const data = await response.json();
-
     if (response.ok && data.estado) {
       return { estado: 'ok', mensaje: `API respondió correctamente`, tiempo_respuesta_ms: tiempo, url: MIKROWISP_URL };
     } else {
@@ -219,7 +198,7 @@ async function verificarGoogleDrive() {
   const inicio = Date.now();
   try {
     if (!process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
-      return { estado: 'error', mensaje: 'Variables de entorno faltantes (GOOGLE_CLIENT_EMAIL o GOOGLE_PRIVATE_KEY)' };
+      return { estado: 'error', mensaje: 'Variables de entorno faltantes' };
     }
     const auth = getGoogleAuth(['https://www.googleapis.com/auth/drive']);
     const drive = google.drive({ version: 'v3', auth });
@@ -257,14 +236,14 @@ function verificarMercately() {
   if (minutosTranscurridos < 60) {
     return { estado: 'ok', mensaje: `Último ping recibido hace ${minutosTranscurridos} minuto(s)`, ultimo_ping: ultimoPingMercately.toISOString(), minutos_transcurridos: minutosTranscurridos };
   } else if (minutosTranscurridos < 360) {
-    return { estado: 'advertencia', mensaje: `Último ping hace ${Math.floor(minutosTranscurridos / 60)} hora(s) - revisa si Mercately está activo`, ultimo_ping: ultimoPingMercately.toISOString(), minutos_transcurridos: minutosTranscurridos };
+    return { estado: 'advertencia', mensaje: `Último ping hace ${Math.floor(minutosTranscurridos / 60)} hora(s)`, ultimo_ping: ultimoPingMercately.toISOString(), minutos_transcurridos: minutosTranscurridos };
   } else {
     return { estado: 'error', mensaje: `Sin pings hace más de 6 horas - posible desconexión`, ultimo_ping: ultimoPingMercately.toISOString(), minutos_transcurridos: minutosTranscurridos };
   }
 }
 
 // ════════════════════════════════════════════════════════
-// ENDPOINT /health - JSON TÉCNICO
+// ENDPOINT /health
 // ════════════════════════════════════════════════════════
 app.get('/health', async (req, res) => {
   const inicio = Date.now();
@@ -277,7 +256,7 @@ app.get('/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     tiempo_total_ms: Date.now() - inicio,
     servicios: {
-      railway: { estado: 'ok', mensaje: 'Servidor v5.2 funcionando', version: '5.2', node: process.version, uptime_segundos: Math.floor(process.uptime()) },
+      railway: { estado: 'ok', mensaje: 'Servidor v5.3 funcionando', version: '5.3', node: process.version, uptime_segundos: Math.floor(process.uptime()) },
       mikrowisp,
       google_drive: drive,
       google_vision: vision,
@@ -287,126 +266,59 @@ app.get('/health', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// ENDPOINT /status - DASHBOARD HTML
+// ENDPOINT /status
 // ════════════════════════════════════════════════════════
 app.get('/status', async (req, res) => {
   const [mikrowisp, drive, vision] = await Promise.all([verificarMikroWisp(), verificarGoogleDrive(), verificarGoogleVision()]);
   const mercately = verificarMercately();
-  const railway = { estado: 'ok', mensaje: `v5.2 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
+  const railway = { estado: 'ok', mensaje: `v5.3 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
   const todos_ok = mikrowisp.estado === 'ok' && drive.estado === 'ok' && vision.estado === 'ok' && (mercately.estado === 'ok' || mercately.estado === 'desconocido');
-
   const colorEstado = (e) => e === 'ok' ? '#22c55e' : e === 'advertencia' ? '#f59e0b' : e === 'desconocido' ? '#6b7280' : '#ef4444';
   const iconoEstado = (e) => e === 'ok' ? '🟢' : e === 'advertencia' ? '🟡' : e === 'desconocido' ? '⚪' : '🔴';
   const tiempoLocal = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil' });
 
   const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="refresh" content="30">
-<title>FibraNet · Estado del Sistema</title>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="refresh" content="30"><title>FibraNet · Estado del Sistema</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: #f1f5f9; min-height: 100vh; padding: 20px; }
-  .container { max-width: 800px; margin: 0 auto; }
-  .header { text-align: center; margin-bottom: 30px; padding: 30px 20px; background: rgba(255,255,255,0.05); border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); }
-  .logo { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
-  .logo span { color: #60a5fa; }
-  .subtitle { color: #94a3b8; font-size: 14px; }
-  .estado-general { margin-top: 16px; padding: 12px 24px; border-radius: 999px; display: inline-block; font-weight: 600; background: ${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}; color: ${todos_ok ? '#22c55e' : '#ef4444'}; border: 1px solid ${todos_ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}; }
-  .servicios { display: grid; gap: 16px; }
-  .servicio { background: rgba(255,255,255,0.05); border-radius: 12px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); transition: transform 0.2s; }
-  .servicio:hover { transform: translateY(-2px); }
-  .servicio-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .servicio-nombre { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
-  .servicio-icono { font-size: 24px; }
-  .servicio-mensaje { color: #cbd5e1; font-size: 14px; margin-top: 8px; }
-  .servicio-detalle { color: #64748b; font-size: 12px; margin-top: 6px; }
-  .badge { padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
-  .footer { text-align: center; margin-top: 30px; color: #64748b; font-size: 13px; }
-  .footer a { color: #60a5fa; text-decoration: none; }
-  .auto-refresh { display: inline-block; margin-top: 8px; padding: 4px 12px; background: rgba(96,165,250,0.1); border-radius: 999px; font-size: 11px; color: #60a5fa; }
-</style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <div class="logo">📡 Fibra<span>Net</span></div>
-      <div class="subtitle">Panel de Estado del Sistema · v5.2</div>
-      <div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR SERVICIOS'}</div>
-    </div>
-    <div class="servicios">
-      <div class="servicio" style="border-left: 4px solid ${colorEstado(railway.estado)}">
-        <div class="servicio-header">
-          <div class="servicio-nombre"><span class="servicio-icono">🚂</span>Railway (Servidor)</div>
-          <span class="badge" style="background: ${colorEstado(railway.estado)}20; color: ${colorEstado(railway.estado)}">${iconoEstado(railway.estado)} ${railway.estado.toUpperCase()}</span>
-        </div>
-        <div class="servicio-mensaje">${railway.mensaje}</div>
-        <div class="servicio-detalle">Node ${process.version} · Puerto ${process.env.PORT || 3000}</div>
-      </div>
-      <div class="servicio" style="border-left: 4px solid ${colorEstado(mikrowisp.estado)}">
-        <div class="servicio-header">
-          <div class="servicio-nombre"><span class="servicio-icono">🌐</span>MikroWisp (ISP)</div>
-          <span class="badge" style="background: ${colorEstado(mikrowisp.estado)}20; color: ${colorEstado(mikrowisp.estado)}">${iconoEstado(mikrowisp.estado)} ${mikrowisp.estado.toUpperCase()}</span>
-        </div>
-        <div class="servicio-mensaje">${mikrowisp.mensaje}</div>
-        ${mikrowisp.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${mikrowisp.tiempo_respuesta_ms}ms · ${MIKROWISP_URL}</div>` : ''}
-        ${mikrowisp.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${mikrowisp.error}</div>` : ''}
-      </div>
-      <div class="servicio" style="border-left: 4px solid ${colorEstado(drive.estado)}">
-        <div class="servicio-header">
-          <div class="servicio-nombre"><span class="servicio-icono">📁</span>Google Drive</div>
-          <span class="badge" style="background: ${colorEstado(drive.estado)}20; color: ${colorEstado(drive.estado)}">${iconoEstado(drive.estado)} ${drive.estado.toUpperCase()}</span>
-        </div>
-        <div class="servicio-mensaje">${drive.mensaje}</div>
-        ${drive.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${drive.tiempo_respuesta_ms}ms</div>` : ''}
-        ${drive.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${drive.error}</div>` : ''}
-      </div>
-      <div class="servicio" style="border-left: 4px solid ${colorEstado(vision.estado)}">
-        <div class="servicio-header">
-          <div class="servicio-nombre"><span class="servicio-icono">👁️</span>Google Vision (OCR)</div>
-          <span class="badge" style="background: ${colorEstado(vision.estado)}20; color: ${colorEstado(vision.estado)}">${iconoEstado(vision.estado)} ${vision.estado.toUpperCase()}</span>
-        </div>
-        <div class="servicio-mensaje">${vision.mensaje}</div>
-        ${vision.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${vision.tiempo_respuesta_ms}ms</div>` : ''}
-        ${vision.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${vision.error}</div>` : ''}
-      </div>
-      <div class="servicio" style="border-left: 4px solid ${colorEstado(mercately.estado)}">
-        <div class="servicio-header">
-          <div class="servicio-nombre"><span class="servicio-icono">💬</span>Mercately (Chatbot)</div>
-          <span class="badge" style="background: ${colorEstado(mercately.estado)}20; color: ${colorEstado(mercately.estado)}">${iconoEstado(mercately.estado)} ${mercately.estado.toUpperCase()}</span>
-        </div>
-        <div class="servicio-mensaje">${mercately.mensaje}</div>
-        ${mercately.ultimo_ping ? `<div class="servicio-detalle">Último contacto: ${new Date(mercately.ultimo_ping).toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>` : ''}
-      </div>
-    </div>
-    <div class="footer">
-      <div>📍 Zamora, Ecuador · ${tiempoLocal}</div>
-      <div class="auto-refresh">🔄 Auto-actualización cada 30 segundos</div>
-      <div style="margin-top: 12px;"><a href="/health">Ver JSON técnico (/health)</a></div>
-    </div>
-  </div>
-</body>
-</html>`;
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f1f5f9;min-height:100vh;padding:20px}
+.container{max-width:800px;margin:0 auto}
+.header{text-align:center;margin-bottom:30px;padding:30px 20px;background:rgba(255,255,255,0.05);border-radius:16px;border:1px solid rgba(255,255,255,0.1)}
+.logo{font-size:32px;font-weight:700;margin-bottom:8px}.logo span{color:#60a5fa}.subtitle{color:#94a3b8;font-size:14px}
+.estado-general{margin-top:16px;padding:12px 24px;border-radius:999px;display:inline-block;font-weight:600;background:${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${todos_ok ? '#22c55e' : '#ef4444'};border:1px solid ${todos_ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}}
+.servicios{display:grid;gap:16px}.servicio{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px;border:1px solid rgba(255,255,255,0.1);transition:transform 0.2s}.servicio:hover{transform:translateY(-2px)}
+.servicio-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.servicio-nombre{font-size:18px;font-weight:600;display:flex;align-items:center;gap:10px}.servicio-icono{font-size:24px}
+.servicio-mensaje{color:#cbd5e1;font-size:14px;margin-top:8px}.servicio-detalle{color:#64748b;font-size:12px;margin-top:6px}
+.badge{padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600;text-transform:uppercase}
+.footer{text-align:center;margin-top:30px;color:#64748b;font-size:13px}.footer a{color:#60a5fa;text-decoration:none}
+.auto-refresh{display:inline-block;margin-top:8px;padding:4px 12px;background:rgba(96,165,250,0.1);border-radius:999px;font-size:11px;color:#60a5fa}
+</style></head><body><div class="container">
+<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado del Sistema · v5.3</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR SERVICIOS'}</div></div>
+<div class="servicios">
+<div class="servicio" style="border-left:4px solid ${colorEstado(railway.estado)}"><div class="servicio-header"><div class="servicio-nombre"><span class="servicio-icono">🚂</span>Railway (Servidor)</div><span class="badge" style="background:${colorEstado(railway.estado)}20;color:${colorEstado(railway.estado)}">${iconoEstado(railway.estado)} ${railway.estado.toUpperCase()}</span></div><div class="servicio-mensaje">${railway.mensaje}</div><div class="servicio-detalle">Node ${process.version} · Puerto ${process.env.PORT || 3000}</div></div>
+<div class="servicio" style="border-left:4px solid ${colorEstado(mikrowisp.estado)}"><div class="servicio-header"><div class="servicio-nombre"><span class="servicio-icono">🌐</span>MikroWisp (ISP)</div><span class="badge" style="background:${colorEstado(mikrowisp.estado)}20;color:${colorEstado(mikrowisp.estado)}">${iconoEstado(mikrowisp.estado)} ${mikrowisp.estado.toUpperCase()}</span></div><div class="servicio-mensaje">${mikrowisp.mensaje}</div>${mikrowisp.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${mikrowisp.tiempo_respuesta_ms}ms · ${MIKROWISP_URL}</div>` : ''}${mikrowisp.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${mikrowisp.error}</div>` : ''}</div>
+<div class="servicio" style="border-left:4px solid ${colorEstado(drive.estado)}"><div class="servicio-header"><div class="servicio-nombre"><span class="servicio-icono">📁</span>Google Drive</div><span class="badge" style="background:${colorEstado(drive.estado)}20;color:${colorEstado(drive.estado)}">${iconoEstado(drive.estado)} ${drive.estado.toUpperCase()}</span></div><div class="servicio-mensaje">${drive.mensaje}</div>${drive.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${drive.tiempo_respuesta_ms}ms</div>` : ''}${drive.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${drive.error}</div>` : ''}</div>
+<div class="servicio" style="border-left:4px solid ${colorEstado(vision.estado)}"><div class="servicio-header"><div class="servicio-nombre"><span class="servicio-icono">👁️</span>Google Vision (OCR)</div><span class="badge" style="background:${colorEstado(vision.estado)}20;color:${colorEstado(vision.estado)}">${iconoEstado(vision.estado)} ${vision.estado.toUpperCase()}</span></div><div class="servicio-mensaje">${vision.mensaje}</div>${vision.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${vision.tiempo_respuesta_ms}ms</div>` : ''}${vision.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${vision.error}</div>` : ''}</div>
+<div class="servicio" style="border-left:4px solid ${colorEstado(mercately.estado)}"><div class="servicio-header"><div class="servicio-nombre"><span class="servicio-icono">💬</span>Mercately (Chatbot)</div><span class="badge" style="background:${colorEstado(mercately.estado)}20;color:${colorEstado(mercately.estado)}">${iconoEstado(mercately.estado)} ${mercately.estado.toUpperCase()}</span></div><div class="servicio-mensaje">${mercately.mensaje}</div>${mercately.ultimo_ping ? `<div class="servicio-detalle">Último contacto: ${new Date(mercately.ultimo_ping).toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>` : ''}</div>
+</div>
+<div class="footer"><div>📍 Zamora, Ecuador · ${tiempoLocal}</div><div class="auto-refresh">🔄 Auto-actualización cada 30 segundos</div><div style="margin-top:12px;"><a href="/health">Ver JSON técnico (/health)</a></div></div>
+</div></body></html>`;
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
 
 app.get('/', (req, res) => {
-  res.json({ estado: 'FibraNet Webhook activo ✅', version: '5.2' });
+  res.json({ estado: 'FibraNet Webhook activo ✅', version: '5.3' });
 });
 
 // ════════════════════════════════════════════════════════
-// 🎓 BUSCAR CLIENTE - ACTUALIZADO EN v5.2
+// 🎓 BUSCAR CLIENTE - v5.3 SALUDO PROFESIONAL TIPO BANCO
 // ════════════════════════════════════════════════════════
 app.post('/cliente/buscar', async (req, res) => {
   try {
     const { cedula, intento } = req.body;
     const numeroIntento = parseInt(intento || 1);
 
-    // 🎓 Log para debugging - vemos qué llega de Mercately
     console.log(`📞 [BUSCAR] Cédula recibida: "${cedula}" | Intento: ${numeroIntento}`);
 
     if (!cedula) return res.json({ encontrado: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
@@ -427,18 +339,29 @@ app.post('/cliente/buscar', async (req, res) => {
     const facturasPendientes = parseInt(cliente.facturacion?.facturas_nopagadas || 0);
     const servicio = cliente.servicios?.[0];
 
-    // 🎓 v5.2: Capitalización profesional
-    // MikroWisp guarda "JACOB DUQUE" → lo convertimos a "Jacob Duque"
+    // 🎓 v5.3: Capitalización profesional + saludo tipo banco
     const nombreCompleto = capitalizarNombre(cliente.nombre);
     const primerNombre = nombreCompleto.split(' ')[0];
 
     console.log(`✅ [BUSCAR] Cliente encontrado: ${nombreCompleto} (cédula: ${cliente.cedula})`);
 
+    // 🎓 NUEVO EN v5.3: Saludo profesional con verificación de identidad
+    // El cliente VE su nombre y cédula, así confirma que es él/ella
+    const mensajeBienvenida = `✅ *¡Bienvenido(a) a FibraNet!* 🌐
+
+Te identifiqué en nuestro sistema:
+
+👤 *Nombre:* ${nombreCompleto}
+🆔 *Cédula:* ${cliente.cedula}
+📋 *Plan:* ${servicio?.perfil || 'N/A'}
+
+¿En qué puedo ayudarte hoy?`;
+
     return res.json({
       encontrado: true,
       id: cliente.id,
-      nombre: nombreCompleto,        // "Jacob Duque" (antes era "JACOB DUQUE")
-      primerNombre: primerNombre,    // "Jacob" (antes era "JACOB")
+      nombre: nombreCompleto,
+      primerNombre: primerNombre,
       cedula: cliente.cedula,
       deuda,
       facturasPendientes,
@@ -446,7 +369,7 @@ app.post('/cliente/buscar', async (req, res) => {
       estadoConexion: servicio?.status_user || 'N/A',
       costo: servicio?.costo || '0',
       idServicio: servicio?.id,
-      mensaje: `✅ *¡Bienvenido ${primerNombre}!*\n\nTe identifiqué en nuestro sistema. 👋\n\n¿En qué puedo ayudarte hoy?`
+      mensaje: mensajeBienvenida
     });
   } catch (err) {
     console.error('Error buscar cliente:', err);
@@ -455,7 +378,7 @@ app.post('/cliente/buscar', async (req, res) => {
 });
 
 // ────────────────────────────────────────
-// VER DEUDA - v5.2 con capitalización
+// VER DEUDA - v5.3 sin nombre personal (usa "estimado")
 // ────────────────────────────────────────
 app.post('/cliente/deuda', async (req, res) => {
   try {
@@ -471,10 +394,19 @@ app.post('/cliente/deuda', async (req, res) => {
     const deuda = parseFloat(cliente.facturacion?.total_facturas || 0);
     const facturas = parseInt(cliente.facturacion?.facturas_nopagadas || 0);
     const nombreCompleto = capitalizarNombre(cliente.nombre);
-    const primerNombre = nombreCompleto.split(' ')[0];
 
-    if (facturas === 0) return res.json({ deuda: 0, mensaje: `✅ *${primerNombre}*, no tienes deudas pendientes.\n\n¡Gracias por mantener tu pago al día! 🎉` });
-    return res.json({ deuda, facturas, mensaje: `💰 *Estado de cuenta:*\n\n👤 ${nombreCompleto}\n📋 Facturas pendientes: *${facturas}*\n💵 Total a pagar: *$${deuda.toFixed(2)}*\n\nPara pagar selecciona *"📸 Pagar mi servicio"* en el menú.` });
+    if (facturas === 0) {
+      return res.json({
+        deuda: 0,
+        mensaje: `✅ *Estimado(a) cliente*, no tienes deudas pendientes.\n\n👤 ${nombreCompleto}\n\n¡Gracias por mantener tu pago al día! 🎉`
+      });
+    }
+
+    return res.json({
+      deuda,
+      facturas,
+      mensaje: `💰 *Estado de cuenta*\n\n👤 ${nombreCompleto}\n📋 Facturas pendientes: *${facturas}*\n💵 Total a pagar: *$${deuda.toFixed(2)}*\n\nPara pagar selecciona *"📸 Pagar mi servicio"* en el menú.`
+    });
   } catch (err) {
     res.status(500).json({ mensaje: '⚠️ Error del sistema. Intenta nuevamente.' });
   }
@@ -565,7 +497,7 @@ app.post('/pago/comprobante', async (req, res) => {
 });
 
 // ────────────────────────────────────────
-// VER PLAN - v5.2 con capitalización
+// VER PLAN - v5.3 sin nombre personal
 // ────────────────────────────────────────
 app.post('/cliente/plan', async (req, res) => {
   try {
@@ -580,9 +512,11 @@ app.post('/cliente/plan', async (req, res) => {
     if (!servicio) return res.json({ mensaje: '❌ No se encontró información del servicio.' });
 
     const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
-    const primerNombre = capitalizarNombre(cliente.nombre).split(' ')[0];
+    const nombreCompleto = capitalizarNombre(cliente.nombre);
 
-    res.json({ mensaje: `📡 *Información de tu servicio:*\n\n👤 ${primerNombre}\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n🔌 IP: ${servicio.ip}\n📅 Cliente desde: ${servicio.instalado}` });
+    res.json({
+      mensaje: `📡 *Información de tu servicio*\n\n👤 ${nombreCompleto}\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n🔌 IP: ${servicio.ip}\n📅 Cliente desde: ${servicio.instalado}`
+    });
   } catch (err) {
     res.status(500).json({ mensaje: '⚠️ Error del sistema. Intenta nuevamente.' });
   }
@@ -631,4 +565,4 @@ app.get('/despedida', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.2 corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.3 corriendo en puerto ${PORT}`));
