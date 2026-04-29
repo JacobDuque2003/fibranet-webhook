@@ -410,9 +410,18 @@ app.post('/pago/info', async (req, res) => {
 
     console.log(`✅ [PAGO INFO] ${capitalizarNombre(cliente.nombre)}: $${deuda.toFixed(2)}`);
 
-    if (facturas === 0) return res.json({ deuda: 0, mensaje: `✅ No tienes deudas pendientes. ¡Estás al día! 🎉` });
-
-    res.json({ deuda, mensaje: `${CUENTAS_BANCARIAS}\n\n💵 *Tu deuda actual: $${deuda.toFixed(2)}*\n\n📸 Realiza tu transferencia y envíanos la *foto del comprobante* aquí mismo para activar tu servicio automáticamente.` });
+    if (facturas === 0) {
+      return res.json({
+        deuda: 0,
+        mensaje: `✅ No tienes deudas pendientes. ¡Estás al día! 🎉`
+      });
+    }
+    
+    res.json({
+      deuda,
+      mensaje: `${CUENTAS_BANCARIAS}\n\n💵 *Tu deuda actual: $${deuda.toFixed(2)}*`
+    });
+    
   } catch (err) {
     console.error('Error pago info:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema. Intenta nuevamente.' });
