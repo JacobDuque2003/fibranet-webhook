@@ -633,3 +633,4 @@ app.get('/despedida', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.2 corriendo en puerto ${PORT}`));
 
+Upgrade to v5.2: capitalize names from MikroWisp + add debug logs
