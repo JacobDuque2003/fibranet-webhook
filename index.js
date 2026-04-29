@@ -1,6 +1,6 @@
 const express = require('express');
 const { google } = require('googleapis');
-const fetch = require('node-fetch');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
@@ -45,31 +45,125 @@ Titular: Andrea Duque Regalado
 Cédula: 1900370691
 Cta. Corriente: 2100299699`;
 
-// ── GOOGLE DRIVE: subir imagen ──
+// ── GOOGLE AUTH ──
+function getGoogleAuth(scopes) {
+  return new google.auth.JWT(
+    GOOGLE_CREDENTIALS.client_email,
+    null,
+    GOOGLE_CREDENTIALS.private_key,
+    scopes
+  );
+}
+
+// ── OCR CON GOOGLE VISION ──
+async function leerComprobante(imageUrl) {
+  try {
+    const auth = getGoogleAuth(['https://www.googleapis.com/auth/cloud-vision']);
+    const token = await auth.getAccessToken();
+
+    // Descargar imagen y convertir a base64
+    const imgResponse = await fetch(imageUrl);
+    const buffer = await imgResponse.buffer();
+    const base64 = buffer.toString('base64');
+
+    const visionResponse = await fetch(
+      'https://vision.googleapis.com/v1/images:annotate',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          requests: [{
+            image: { content: base64 },
+            features: [{ type: 'TEXT_DETECTION', maxResults: 1 }]
+          }]
+        })
+      }
+    );
+
+    const visionData = await visionResponse.json();
+    const textoCompleto = visionData.responses?.[0]?.fullTextAnnotation?.text || '';
+
+    // Extraer datos del comprobante
+    const datos = extraerDatosComprobante(textoCompleto);
+    return { exito: true, texto: textoCompleto, datos };
+  } catch (err) {
+    console.error('Error Vision:', err.message);
+    return { exito: false, error: err.message };
+  }
+}
+
+// ── EXTRAER DATOS DEL COMPROBANTE ──
+function extraerDatosComprobante(texto) {
+  const textoUpper = texto.toUpperCase();
+
+  // Extraer monto
+  const montoPatterns = [
+    /\$\s*(\d+[.,]\d{2})/,
+    /MONTO[:\s]+\$?\s*(\d+[.,]\d{2})/i,
+    /VALOR[:\s]+\$?\s*(\d+[.,]\d{2})/i,
+    /TOTAL[:\s]+\$?\s*(\d+[.,]\d{2})/i,
+    /(\d+[.,]\d{2})\s*USD/i
+  ];
+  let monto = null;
+  for (const pattern of montoPatterns) {
+    const match = texto.match(pattern);
+    if (match) {
+      monto = parseFloat(match[1].replace(',', '.'));
+      break;
+    }
+  }
+
+  // Extraer número de comprobante
+  const comprobantePattterns = [
+    /(?:comprobante|referencia|transacci[oó]n|n[uú]mero|nro)[:\s#]+(\w+)/i,
+    /(?:TRX|TXN|REF|OP)[:\s#-]*(\d+)/i,
+    /\b(\d{8,12})\b/
+  ];
+  let comprobante = null;
+  for (const pattern of comprobantePattterns) {
+    const match = texto.match(pattern);
+    if (match) { comprobante = match[1]; break; }
+  }
+
+  // Detectar si fue exitosa
+  const exitosa = /exitosa|exitoso|aprobado|aprobada|success|realizada|completada|confirmada|\u2713|llegó/i.test(texto);
+
+  // Detectar beneficiario FibraNet
+  const esFibranet = /tapia|fibranet|oscar|aldo|andrea|duque|soledad/i.test(texto);
+
+  // Detectar banco
+  let banco = 'Desconocido';
+  if (/pichincha/i.test(texto)) banco = 'Banco Pichincha';
+  else if (/loja/i.test(texto)) banco = 'Banco de Loja';
+  else if (/austro/i.test(texto)) banco = 'Banco del Austro';
+  else if (/mego|coopmego/i.test(texto)) banco = 'CoopMego';
+  else if (/cacpe/i.test(texto)) banco = 'CACPE Zamora';
+  else if (/jep/i.test(texto)) banco = 'Coop JEP';
+  else if (/davivienda/i.test(texto)) banco = 'Davivienda';
+  else if (/produbanco/i.test(texto)) banco = 'Produbanco';
+
+  return { monto, comprobante, exitosa, esFibranet, banco };
+}
+
+// ── GUARDAR IMAGEN EN DRIVE ──
 async function subirImagenDrive(imageUrl, nombre, cedula, comprobante) {
   try {
-    const auth = new google.auth.JWT(
-      GOOGLE_CREDENTIALS.client_email,
-      null,
-      GOOGLE_CREDENTIALS.private_key,
-      ['https://www.googleapis.com/auth/drive']
-    );
+    const auth = getGoogleAuth(['https://www.googleapis.com/auth/drive']);
     const drive = google.drive({ version: 'v3', auth });
     const fecha = new Date().toISOString().slice(0, 10);
-    const nombreArchivo = `${fecha}_${nombre.replace(/\s+/g, '-')}_${cedula}_${comprobante}.jpg`;
+    const nombreArchivo = `${fecha}_${nombre.replace(/\s+/g, '-')}_${cedula}_${comprobante || Date.now()}.jpg`;
 
-    // Descargar imagen
     const imgResponse = await fetch(imageUrl);
     const buffer = await imgResponse.buffer();
     const { Readable } = require('stream');
     const stream = Readable.from(buffer);
 
-    const fileMetadata = { name: nombreArchivo, parents: [DRIVE_FOLDER_ID] };
-    const media = { mimeType: 'image/jpeg', body: stream };
-
     const file = await drive.files.create({
-      resource: fileMetadata,
-      media,
+      resource: { name: nombreArchivo, parents: [DRIVE_FOLDER_ID] },
+      media: { mimeType: 'image/jpeg', body: stream },
       fields: 'id, name, webViewLink'
     });
 
@@ -80,30 +174,31 @@ async function subirImagenDrive(imageUrl, nombre, cedula, comprobante) {
   }
 }
 
-// ── HEALTH CHECK ──
+// ────────────────────────────────────────
+// HEALTH CHECK
+// ────────────────────────────────────────
 app.get('/', (req, res) => {
-  res.json({ estado: 'FibraNet Webhook activo ✅', version: '4.0' });
+  res.json({ estado: 'FibraNet Webhook activo ✅', version: '5.0' });
 });
 
-// ── BUSCAR CLIENTE ──
+// ────────────────────────────────────────
+// BUSCAR CLIENTE
+// ────────────────────────────────────────
 app.post('/cliente/buscar', async (req, res) => {
   try {
     const { cedula, intento } = req.body;
     const numeroIntento = parseInt(intento || 1);
-    if (!cedula) return res.json({ encontrado: false, transferir: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
+    if (!cedula) return res.json({ encontrado: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
 
     const response = await fetch(`${MIKROWISP_URL}/api/v1/GetClientsDetails`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: MIKROWISP_TOKEN, cedula })
     });
     const data = await response.json();
 
     if (data.estado !== 'exito' || !data.datos?.length) {
-      if (numeroIntento >= 2) {
-        return res.json({ encontrado: false, transferir: true, mensaje: `😕 No pudimos identificarte con la cédula *${cedula}*.\n\nUn asesor de FibraNet te ayudará personalmente. Por favor espera un momento. 👨‍💻` });
-      }
-      return res.json({ encontrado: false, transferir: false, nuevoIntento: true, mensaje: `❌ No encontré ningún cliente con la cédula *${cedula}*.\n\n¿Qué deseas hacer?` });
+      if (numeroIntento >= 2) return res.json({ encontrado: false, transferir: true, mensaje: `😕 No pudimos identificarte.\n\nUn asesor de FibraNet te ayudará personalmente. 👨‍💻` });
+      return res.json({ encontrado: false, transferir: false, mensaje: `❌ No encontré ningún cliente con la cédula *${cedula}*.\n\n¿Qué deseas hacer?` });
     }
 
     const cliente = data.datos[0];
@@ -113,20 +208,20 @@ app.post('/cliente/buscar', async (req, res) => {
     const nombre = cliente.nombre.trim().split(' ')[0];
 
     return res.json({
-      encontrado: true, transferir: false,
-      id: cliente.id, nombre: cliente.nombre.trim(), primerNombre: nombre,
-      cedula: cliente.cedula, estado: cliente.estado, deuda, facturasPendientes,
+      encontrado: true, id: cliente.id, nombre: cliente.nombre.trim(),
+      primerNombre: nombre, cedula: cliente.cedula, deuda, facturasPendientes,
       plan: servicio?.perfil || 'N/A', estadoConexion: servicio?.status_user || 'N/A',
       costo: servicio?.costo || '0', idServicio: servicio?.id,
-      instalado: servicio?.instalado || 'N/A', ip: servicio?.ip || 'N/A',
       mensaje: `✅ *¡Bienvenido ${nombre}!*\n\nTe identifiqué en nuestro sistema. 👋\n\n¿En qué puedo ayudarte hoy?`
     });
   } catch (err) {
-    res.status(500).json({ encontrado: false, transferir: true, mensaje: '⚠️ Hubo un error en el sistema. Un asesor te atenderá en un momento.' });
+    res.status(500).json({ encontrado: false, transferir: true, mensaje: '⚠️ Error del sistema. Un asesor te atenderá.' });
   }
 });
 
-// ── VER DEUDA ──
+// ────────────────────────────────────────
+// VER DEUDA
+// ────────────────────────────────────────
 app.post('/cliente/deuda', async (req, res) => {
   try {
     const { idcliente } = req.body;
@@ -149,7 +244,9 @@ app.post('/cliente/deuda', async (req, res) => {
   }
 });
 
-// ── INFO DE PAGO ──
+// ────────────────────────────────────────
+// INFO DE PAGO
+// ────────────────────────────────────────
 app.post('/pago/info', async (req, res) => {
   try {
     const { idcliente } = req.body;
@@ -169,55 +266,116 @@ app.post('/pago/info', async (req, res) => {
   }
 });
 
-// ── PROCESAR PAGO + GUARDAR EN DRIVE ──
-app.post('/pago/procesar', async (req, res) => {
+// ────────────────────────────────────────
+// PROCESAR COMPROBANTE CON OCR + ACTIVAR
+// ────────────────────────────────────────
+app.post('/pago/comprobante', async (req, res) => {
   try {
-    const { idfactura, cantidad, idtransaccion, numero_comprobante, nombre, cedula, imagen_url } = req.body;
-    const txId = idtransaccion || numero_comprobante || `WA-${Date.now()}`;
+    const { idcliente, nombre, cedula, imagen_url } = req.body;
 
-    // Guardar imagen en Drive si existe
-    let linkDrive = null;
-    if (imagen_url && nombre && cedula) {
-      const resultado = await subirImagenDrive(imagen_url, nombre, cedula, txId);
-      if (resultado.exito) linkDrive = resultado.link;
+    if (!imagen_url) {
+      return res.json({ activado: false, mensaje: '📸 Por favor envía una *foto clara* del comprobante de transferencia.' });
     }
 
-    const response = await fetch(`${MIKROWISP_URL}/api/v1/PaidInvoice`, {
+    // 1. Obtener deuda del cliente
+    const clienteResponse = await fetch(`${MIKROWISP_URL}/api/v1/GetClientsDetails`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token: MIKROWISP_TOKEN, idfactura,
-        pasarela: 'WhatsApp-Transferencia', cantidad,
-        idtransaccion: txId,
-        fechalimite: new Date().toISOString().slice(0, 19).replace('T', ' ')
-      })
+      body: JSON.stringify({ token: MIKROWISP_TOKEN, idcliente })
     });
-    const data = await response.json();
+    const clienteData = await clienteResponse.json();
+    const cliente = clienteData.datos?.[0];
+    const deuda = parseFloat(cliente?.facturacion?.total_facturas || 0);
 
-    if (data.estado === 'exito') {
-      return res.json({ activado: true, linkDrive, mensaje: `⚡ *¡Servicio activado exitosamente!*\n\n✅ Pago: $${cantidad}\n🔑 Comprobante: #${txId}\n📡 Tu internet ya está activo.\n\n¡Gracias por tu pago! 🙌` });
-    }
-    return res.json({ activado: false, linkDrive, mensaje: `⚠️ Tu comprobante fue recibido y está siendo verificado.\n\n🔑 Ref: #${txId}\n\nTe notificaremos cuando tu servicio sea activado.` });
-  } catch (err) {
-    res.status(500).json({ activado: false, mensaje: '⚠️ Error del sistema. Tu pago será revisado manualmente.' });
-  }
-});
-
-// ── FACTURAS PENDIENTES ──
-app.post('/cliente/facturas', async (req, res) => {
-  try {
-    const { idcliente } = req.body;
-    const response = await fetch(`${MIKROWISP_URL}/api/v1/GetInvoices`, {
+    // 2. Obtener factura pendiente
+    const facturasResponse = await fetch(`${MIKROWISP_URL}/api/v1/GetInvoices`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token: MIKROWISP_TOKEN, idcliente, estado: 'no pagada' })
     });
-    const data = await response.json();
-    res.json(data);
+    const facturasData = await facturasResponse.json();
+    const facturas = facturasData.facturas || [];
+    const facturaPendiente = facturas.find(f => f.estado !== 'pagado');
+
+    // 3. Leer comprobante con OCR
+    const ocr = await leerComprobante(imagen_url);
+
+    if (!ocr.exito) {
+      return res.json({ activado: false, mensaje: '⚠️ No pude leer el comprobante. Por favor envía una foto más clara y nítida. 📸' });
+    }
+
+    const { monto, comprobante, exitosa, esFibranet, banco } = ocr.datos;
+
+    // 4. Validaciones
+    if (!exitosa) {
+      return res.json({ activado: false, mensaje: '❌ La transferencia no aparece como exitosa en el comprobante.\n\nVerifica que la transferencia fue aprobada e intenta de nuevo.' });
+    }
+
+    if (!esFibranet) {
+      return res.json({ activado: false, mensaje: '⚠️ El comprobante no parece ser un pago a FibraNet.\n\nVerifica que transferiste a las cuentas correctas de FibraNet e intenta de nuevo.' });
+    }
+
+    if (!monto) {
+      return res.json({ activado: false, mensaje: '⚠️ No pude leer el monto del comprobante. Por favor envía una foto más clara. 📸' });
+    }
+
+    const diferencia = Math.abs(monto - deuda);
+
+    // Pago menor
+    if (monto < deuda - 0.10) {
+      // Guardar imagen de todas formas
+      await subirImagenDrive(imagen_url, nombre || 'cliente', cedula || 'sin-cedula', comprobante || Date.now());
+      return res.json({
+        activado: false,
+        mensaje: `⚠️ *Pago incompleto*\n\n💰 Tu deuda: *$${deuda.toFixed(2)}*\n💵 Monto recibido: *$${monto.toFixed(2)}*\n❗ Falta: *$${(deuda - monto).toFixed(2)}*\n\nPor favor completa el pago y envía el nuevo comprobante.`
+      });
+    }
+
+    // 5. Guardar imagen en Drive
+    const drive = await subirImagenDrive(imagen_url, nombre || 'cliente', cedula || 'sin-cedula', comprobante || Date.now());
+
+    // 6. Activar en MikroWisp si hay factura pendiente
+    if (facturaPendiente) {
+      const pagoResponse = await fetch(`${MIKROWISP_URL}/api/v1/PaidInvoice`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: MIKROWISP_TOKEN,
+          idfactura: facturaPendiente.id,
+          pasarela: 'WhatsApp-Transferencia',
+          cantidad: monto,
+          idtransaccion: comprobante || `WA-${Date.now()}`,
+          fechalimite: new Date().toISOString().slice(0, 19).replace('T', ' ')
+        })
+      });
+      const pagoData = await pagoResponse.json();
+
+      if (pagoData.estado === 'exito') {
+        let mensajeExtra = '';
+        if (monto > deuda + 0.10) {
+          mensajeExtra = `\n💰 Saldo a favor: *$${(monto - deuda).toFixed(2)}* — se aplicará al próximo mes.`;
+        }
+        return res.json({
+          activado: true,
+          banco,
+          comprobante,
+          mensaje: `⚡ *¡Servicio activado exitosamente!*\n\n✅ Pago verificado: *$${monto.toFixed(2)}*\n🏦 Banco: ${banco}\n🔑 Comprobante: #${comprobante}${mensajeExtra}\n\n📡 Tu internet ya está activo.\n¡Gracias por tu pago! 🙌`
+        });
+      }
+    }
+
+    // Si no hay factura o falló MikroWisp → pendiente de revisión
+    return res.json({
+      activado: false,
+      mensaje: `✅ Comprobante recibido y guardado.\n\n🔑 Ref: #${comprobante || 'N/A'}\n💵 Monto: $${monto.toFixed(2)}\n\nUn asesor verificará y activará tu servicio en breve. ⏰`
+    });
+
   } catch (err) {
-    res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
+    console.error('Error comprobante:', err);
+    res.status(500).json({ activado: false, mensaje: '⚠️ Error procesando el comprobante. Un asesor lo revisará manualmente.' });
   }
 });
 
-// ── VER PLAN ──
+// ────────────────────────────────────────
+// VER PLAN
+// ────────────────────────────────────────
 app.post('/cliente/plan', async (req, res) => {
   try {
     const { idcliente } = req.body;
@@ -238,39 +396,51 @@ app.post('/cliente/plan', async (req, res) => {
   }
 });
 
-// ── REPORTE TÉCNICO ──
+// ────────────────────────────────────────
+// REPORTE TÉCNICO
+// ────────────────────────────────────────
 app.post('/soporte/reporte', async (req, res) => {
   try {
     const { nombre, problema, descripcion } = req.body;
-    const problemas = { 'sin_internet': '🔴 Sin conexión a internet', 'lento': '🐌 Internet lento', 'intermitente': '⚡ Conexión intermitente', 'otro': `📝 ${descripcion || 'Problema no especificado'}` };
-    const descripcionProblema = problemas[problema] || descripcion || 'Problema técnico';
+    const problemas = {
+      'sin_internet': '🔴 Sin conexión a internet',
+      'lento': '🐌 Internet lento',
+      'intermitente': '⚡ Conexión intermitente',
+      'otro': `📝 ${descripcion || 'Problema no especificado'}`
+    };
     const ticket = `TKT-${Date.now().toString().slice(-6)}`;
-    res.json({ ticket, mensaje: `🔧 *Reporte técnico registrado*\n\n📋 Ticket: #${ticket}\n👤 ${nombre}\n⚠️ ${descripcionProblema}\n\n✅ Nuestro equipo técnico fue notificado y atenderá tu caso a la brevedad.\n\n👨‍💻 Para hablar con un asesor selecciona esa opción en el menú.` });
+    res.json({ ticket, mensaje: `🔧 *Reporte técnico registrado*\n\n📋 Ticket: #${ticket}\n👤 ${nombre}\n⚠️ ${problemas[problema] || descripcion}\n\n✅ Nuestro equipo técnico fue notificado.\n\n👨‍💻 Para hablar con un asesor selecciona esa opción en el menú.` });
   } catch (err) {
-    res.status(500).json({ mensaje: '⚠️ Error del sistema. Intenta nuevamente.' });
+    res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
 
-// ── CAMBIO DE CLAVE ──
+// ────────────────────────────────────────
+// CAMBIO DE CLAVE
+// ────────────────────────────────────────
 app.post('/soporte/cambio-clave', async (req, res) => {
   try {
     const { nombre, nueva_clave } = req.body;
     const ticket = `CLV-${Date.now().toString().slice(-6)}`;
-    res.json({ ticket, mensaje: `🔑 *Solicitud de cambio de clave registrada*\n\n📋 Ticket: #${ticket}\n👤 ${nombre}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Un técnico procesará tu solicitud en las próximas *2 horas hábiles*.\n\n👨‍💻 Para hablar con un asesor selecciona esa opción en el menú.` });
+    res.json({ ticket, mensaje: `🔑 *Solicitud de cambio de clave registrada*\n\n📋 Ticket: #${ticket}\n👤 ${nombre}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Un técnico procesará tu solicitud en las próximas *2 horas hábiles*.` });
   } catch (err) {
-    res.status(500).json({ mensaje: '⚠️ Error del sistema. Intenta nuevamente.' });
+    res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
 
-// ── NUEVO CLIENTE ──
+// ────────────────────────────────────────
+// NUEVO CLIENTE
+// ────────────────────────────────────────
 app.get('/nuevo-cliente', (req, res) => {
-  res.json({ mensaje: `🌟 *¡Gracias por tu interés en FibraNet!*\n\nSomos proveedores de internet de fibra óptica en Zamora.\n\nUn asesor de ventas se comunicará contigo para darte información sobre nuestros planes y cobertura.\n\n¡Bienvenido a la familia FibraNet! 🌐` });
+  res.json({ mensaje: `🌟 *¡Gracias por tu interés en FibraNet!*\n\nSomos proveedores de internet de fibra óptica en Zamora.\n\nUn asesor te contactará con información de planes y cobertura. 🌐` });
 });
 
-// ── DESPEDIDA ──
+// ────────────────────────────────────────
+// DESPEDIDA
+// ────────────────────────────────────────
 app.get('/despedida', (req, res) => {
-  res.json({ mensaje: `👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐\nSi necesitas ayuda escríbenos cuando quieras.\n\n_FibraNet — Soluciones GPON_` });
+  res.json({ mensaje: `👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐\nEscríbenos cuando necesites ayuda.\n\n_FibraNet — Soluciones GPON_` });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v4.0 corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.0 corriendo en puerto ${PORT}`));
