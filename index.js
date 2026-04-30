@@ -257,7 +257,7 @@ app.get('/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     tiempo_total_ms: Date.now() - inicio,
     servicios: {
-      railway: { estado: 'ok', mensaje: 'Servidor v5.5.1 funcionando', version: '5.5.1', node: process.version, uptime_segundos: Math.floor(process.uptime()) },
+      railway: { estado: 'ok', mensaje: 'Servidor v5.5.2 funcionando', version: '5.5.2', node: process.version, uptime_segundos: Math.floor(process.uptime()) },
       mikrowisp, google_drive: drive, google_vision: vision, mercately
     },
     sesiones: {
@@ -273,7 +273,7 @@ app.get('/health', async (req, res) => {
 app.get('/status', async (req, res) => {
   const [mikrowisp, drive, vision] = await Promise.all([verificarMikroWisp(), verificarGoogleDrive(), verificarGoogleVision()]);
   const mercately = verificarMercately();
-  const railway = { estado: 'ok', mensaje: `v5.5.1 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
+  const railway = { estado: 'ok', mensaje: `v5.5.2 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
   const todos_ok = mikrowisp.estado === 'ok' && drive.estado === 'ok' && vision.estado === 'ok' && (mercately.estado === 'ok' || mercately.estado === 'desconocido');
   const colorEstado = (e) => e === 'ok' ? '#22c55e' : e === 'advertencia' ? '#f59e0b' : e === 'desconocido' ? '#6b7280' : '#ef4444';
   const iconoEstado = (e) => e === 'ok' ? '🟢' : e === 'advertencia' ? '🟡' : e === 'desconocido' ? '⚪' : '🔴';
@@ -283,7 +283,7 @@ app.get('/status', async (req, res) => {
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="refresh" content="30"><title>FibraNet · Estado del Sistema</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f1f5f9;min-height:100vh;padding:20px}.container{max-width:800px;margin:0 auto}.header{text-align:center;margin-bottom:30px;padding:30px 20px;background:rgba(255,255,255,0.05);border-radius:16px;border:1px solid rgba(255,255,255,0.1)}.logo{font-size:32px;font-weight:700;margin-bottom:8px}.logo span{color:#60a5fa}.subtitle{color:#94a3b8;font-size:14px}.estado-general{margin-top:16px;padding:12px 24px;border-radius:999px;display:inline-block;font-weight:600;background:${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${todos_ok ? '#22c55e' : '#ef4444'};border:1px solid ${todos_ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}}.servicios{display:grid;gap:16px}.servicio{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px;border:1px solid rgba(255,255,255,0.1);transition:transform 0.2s}.servicio:hover{transform:translateY(-2px)}.servicio-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.servicio-nombre{font-size:18px;font-weight:600;display:flex;align-items:center;gap:10px}.servicio-icono{font-size:24px}.servicio-mensaje{color:#cbd5e1;font-size:14px;margin-top:8px}.servicio-detalle{color:#64748b;font-size:12px;margin-top:6px}.badge{padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600;text-transform:uppercase}.footer{text-align:center;margin-top:30px;color:#64748b;font-size:13px}.footer a{color:#60a5fa;text-decoration:none}.auto-refresh{display:inline-block;margin-top:8px;padding:4px 12px;background:rgba(96,165,250,0.1);border-radius:999px;font-size:11px;color:#60a5fa}.sesiones{background:rgba(96,165,250,0.05);border:1px solid rgba(96,165,250,0.2);border-radius:12px;padding:16px;margin-top:16px;text-align:center;color:#94a3b8;font-size:13px}.sesiones strong{color:#60a5fa}</style>
 </head><body><div class="container">
-<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado del Sistema · v5.5.1</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR SERVICIOS'}</div></div>
+<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado del Sistema · v5.5.2</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR SERVICIOS'}</div></div>
 <div class="servicios">
 <div class="servicio" style="border-left:4px solid ${colorEstado(railway.estado)}"><div class="servicio-header"><div class="servicio-nombre"><span class="servicio-icono">🚂</span>Railway (Servidor)</div><span class="badge" style="background:${colorEstado(railway.estado)}20;color:${colorEstado(railway.estado)}">${iconoEstado(railway.estado)} ${railway.estado.toUpperCase()}</span></div><div class="servicio-mensaje">${railway.mensaje}</div><div class="servicio-detalle">Node ${process.version} · Puerto ${process.env.PORT || 3000}</div></div>
 <div class="servicio" style="border-left:4px solid ${colorEstado(mikrowisp.estado)}"><div class="servicio-header"><div class="servicio-nombre"><span class="servicio-icono">🌐</span>MikroWisp (ISP)</div><span class="badge" style="background:${colorEstado(mikrowisp.estado)}20;color:${colorEstado(mikrowisp.estado)}">${iconoEstado(mikrowisp.estado)} ${mikrowisp.estado.toUpperCase()}</span></div><div class="servicio-mensaje">${mikrowisp.mensaje}</div>${mikrowisp.tiempo_respuesta_ms ? `<div class="servicio-detalle">Tiempo de respuesta: ${mikrowisp.tiempo_respuesta_ms}ms · ${MIKROWISP_URL}</div>` : ''}${mikrowisp.error ? `<div class="servicio-detalle" style="color:#ef4444">Error: ${mikrowisp.error}</div>` : ''}</div>
@@ -440,17 +440,65 @@ app.post('/pago/comprobante', async (req, res) => {
   try {
     const { cedula, imagen_url } = req.body;
 
-    // 🎓 v5.5.1: LOGGING DETALLADO PARA DEBUGGING
+    // 🎓 v5.5.2: SUPER DEBUGGING - Probar TODAS las variables candidatas
     console.log(`📸 [COMPROBANTE] ===== DATOS RECIBIDOS =====`);
-    console.log(`📸 [COMPROBANTE] Body completo:`, JSON.stringify(req.body));
+    console.log(`📸 [COMPROBANTE] Body completo:`, JSON.stringify(req.body, null, 2));
     console.log(`📸 [COMPROBANTE] Cédula: "${cedula}"`);
     console.log(`📸 [COMPROBANTE] imagen_url: "${imagen_url}"`);
     console.log(`📸 [COMPROBANTE] tipo de imagen_url: ${typeof imagen_url}`);
     console.log(`📸 [COMPROBANTE] longitud imagen_url: ${imagen_url?.length || 0}`);
+
+    // 🎓 v5.5.2: Probar todas las variables candidatas
+    console.log(`🔬 [COMPROBANTE] ===== ANÁLISIS DE VARIABLES =====`);
+    const candidatas = ['imagen_url', 'test_message_media_url', 'test_media_url', 'test_whatsapp_media_url', 'test_file_url', 'test_attachment_url', 'test_multimedia', 'test_image_url'];
+
+    let urlEncontrada = null;
+    let nombreVariableValida = null;
+
+    for (const nombre of candidatas) {
+      const valor = req.body[nombre];
+      if (valor) {
+        const esURLValida = typeof valor === 'string' && valor.startsWith('http');
+        const esVariableLiteral = typeof valor === 'string' && valor.startsWith('{{');
+        const longitud = valor.length;
+
+        let estado = '❓';
+        if (esURLValida) estado = '✅ URL VÁLIDA';
+        else if (esVariableLiteral) estado = '⚠️ VARIABLE NO REEMPLAZADA';
+        else if (longitud === 0) estado = '⬜ VACÍA';
+        else estado = '❌ NO ES URL';
+
+        console.log(`🔬 ${nombre}: ${estado} | valor: "${valor.substring(0, 100)}" | len: ${longitud}`);
+
+        // Si encontramos una URL válida, la guardamos
+        if (esURLValida && !urlEncontrada) {
+          urlEncontrada = valor;
+          nombreVariableValida = nombre;
+        }
+      } else {
+        console.log(`🔬 ${nombre}: ⬜ NO PRESENTE en el body`);
+      }
+    }
+
+    console.log(`🔬 [COMPROBANTE] ============================`);
+
+    if (urlEncontrada) {
+      console.log(`✅ [COMPROBANTE] ¡URL VÁLIDA ENCONTRADA en variable "${nombreVariableValida}"!`);
+      console.log(`✅ [COMPROBANTE] URL: ${urlEncontrada.substring(0, 200)}`);
+    } else {
+      console.log(`❌ [COMPROBANTE] NINGUNA variable contiene URL válida`);
+    }
+
     console.log(`📸 [COMPROBANTE] ============================`);
 
+    // Usar la URL encontrada (si existe) o la imagen_url original
+    const urlAUsar = urlEncontrada || imagen_url;
+
     if (!cedula) return res.json({ activado: false, mensaje: '⚠️ Error: no se identificó al cliente. Escriba "pago" para empezar.' });
-    if (!imagen_url) return res.json({ activado: false, mensaje: '📸 Por favor envíe una *foto clara* del comprobante de transferencia.' });
+    if (!urlAUsar || !urlAUsar.startsWith('http')) {
+      console.log(`❌ [COMPROBANTE] Sin URL válida para procesar`);
+      return res.json({ activado: false, mensaje: '📸 Por favor envíe una *foto clara* del comprobante de transferencia.' });
+    }
 
     const resultado = await buscarClientePorCedula(cedula);
     if (!resultado.exito) return res.json({ activado: false, mensaje: '❌ No se encontró información del cliente.' });
@@ -468,7 +516,7 @@ app.post('/pago/comprobante', async (req, res) => {
     const facturas = facturasData.facturas || [];
     const facturaPendiente = facturas.find(f => f.estado !== 'pagado');
 
-    const ocr = await leerComprobante(imagen_url);
+    const ocr = await leerComprobante(urlAUsar);
     if (!ocr.exito) return res.json({ activado: false, mensaje: '⚠️ No pude leer el comprobante. Por favor envíe una foto más clara y nítida. 📸' });
 
     const { monto, comprobante, exitosa, esFibranet, banco } = ocr.datos;
@@ -479,11 +527,11 @@ app.post('/pago/comprobante', async (req, res) => {
     if (!monto) return res.json({ activado: false, mensaje: '⚠️ No pude leer el monto del comprobante. Por favor envíe una foto más clara. 📸' });
 
     if (monto < deuda - 0.10) {
-      await subirImagenDrive(imagen_url, nombreCompleto, cedula, comprobante || Date.now());
+      await subirImagenDrive(urlAUsar, nombreCompleto, cedula, comprobante || Date.now());
       return res.json({ activado: false, mensaje: `⚠️ *Pago incompleto*\n\n💰 Su deuda: *$${deuda.toFixed(2)}*\n💵 Monto recibido: *$${monto.toFixed(2)}*\n❗ Falta: *$${(deuda - monto).toFixed(2)}*\n\nPor favor complete el pago y envíe el nuevo comprobante.` });
     }
 
-    const drive = await subirImagenDrive(imagen_url, nombreCompleto, cedula, comprobante || Date.now());
+    const drive = await subirImagenDrive(urlAUsar, nombreCompleto, cedula, comprobante || Date.now());
     console.log(`✅ [COMPROBANTE] Drive: ${drive.nombre}`);
 
     if (facturaPendiente) {
@@ -625,4 +673,4 @@ app.post('/despedida', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.5.1 corriendo en puerto ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 FibraNet Webhook v5.5.2 corriendo en puerto ${PORT}`));
