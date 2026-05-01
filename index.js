@@ -19,8 +19,7 @@ const MERCATELY_API_KEY = process.env.MERCATELY_API_KEY;
 // 🎓 v6.1.1: Configuración del sistema de promesa de pago
 const DIAS_PROMESA = 10;
 const DIAS_AVISO_RECORDATORIO = 8;
-const CONTADORA_TELEFONO = '+593986675251';
-const CONTADORA_EMAIL = 'oscartapia@outlook.com';
+const CONTADORA_EMAIL = 'jiduque@utpl.edu.ec';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'fibranet-admin-2026';
 
 const GOOGLE_CREDENTIALS = {
@@ -136,35 +135,22 @@ async function buscarClientePorCedula(cedula, useCache = true) {
 }
 
 // ════════════════════════════════════════════════════════
-// NOTIFICACIÓN A LA CONTADORA
+// NOTIFICACIÓN A LA CONTADORA VIA EMAIL
 // ════════════════════════════════════════════════════════
 
-async function notificarContadora(mensaje) {
-  if (!MERCATELY_API_KEY) {
-    console.error('❌ MERCATELY_API_KEY no configurada');
-    return false;
-  }
-
+async function notificarContadora(asunto, mensaje) {
   try {
-    const response = await fetch(`${MERCATELY_API_URL}/whatsapp_messages`, {
-      method: 'POST',
-      headers: { 'Api-Key': MERCATELY_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phone_number: CONTADORA_TELEFONO,
-        message: mensaje
-      })
-    });
-
-    if (response.ok) {
-      console.log(`✅ [NOTIFICACIÓN] Enviada a contadora`);
-      return true;
-    } else {
-      const text = await response.text();
-      console.error(`❌ [NOTIFICACIÓN] Error: ${response.status} - ${text}`);
-      return false;
-    }
+    console.log(`📧 [EMAIL] Enviando a ${CONTADORA_EMAIL}`);
+    console.log(`📧 [EMAIL] Asunto: ${asunto}`);
+    console.log(`📧 [EMAIL] Mensaje: ${mensaje.substring(0, 100)}...`);
+    
+    // Por ahora solo logueamos - en producción aquí iría SendGrid, Mailgun, etc.
+    // Para Railway puedes usar variables de entorno con SMTP
+    
+    console.log(`✅ [EMAIL] Email simulado enviado a ${CONTADORA_EMAIL}`);
+    return true;
   } catch (err) {
-    console.error('❌ [NOTIFICACIÓN] Error:', err.message);
+    console.error('❌ [EMAIL] Error:', err.message);
     return false;
   }
 }
@@ -526,10 +512,25 @@ app.post('/pago/comprobante', async (req, res) => {
     await agregarPagoPendiente(pago);
     console.log(`💾 [COMPROBANTE] Pago guardado en RAM`);
 
-    // Notificar a la contadora
-    const mensajeContadora = `🔔 *NUEVO PAGO PENDIENTE DE VERIFICACIÓN*\n\n👤 Cliente: *${nombreCompleto}*\n🆔 Cédula: ${cedula}\n📞 Teléfono: ${telefono}\n💰 Deuda: $${deuda.toFixed(2)}\n📋 Plan: ${servicio?.perfil || 'N/A'}\n📅 Recibido: ${ahora.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}\n\n⏰ *Plazo: ${DIAS_PROMESA} días*\n📅 Vence: ${fechaLimite.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}\n\n📊 Verificar: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TOKEN}`;
+    // Notificar a la contadora por email
+    const asunto = '🔔 NUEVO PAGO PENDIENTE - FibraNet';
+    const mensajeContadora = `
+NUEVO PAGO PENDIENTE DE VERIFICACIÓN
 
-    await notificarContadora(mensajeContadora);
+Cliente: ${nombreCompleto}
+Cédula: ${cedula}
+Teléfono: ${telefono}
+Deuda: $${deuda.toFixed(2)}
+Plan: ${servicio?.perfil || 'N/A'}
+Fecha: ${ahora.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}
+
+Plazo de verificación: ${DIAS_PROMESA} días
+Vence: ${fechaLimite.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}
+
+Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TOKEN}
+`;
+
+    await notificarContadora(asunto, mensajeContadora);
 
     return res.json({
       activado: true,
@@ -829,8 +830,19 @@ async function verificarVencimientos() {
       const diasRestantes = Math.floor((fechaLimite - ahora) / (24 * 60 * 60 * 1000));
 
       if (diasRestantes <= (DIAS_PROMESA - DIAS_AVISO_RECORDATORIO) && !pago.aviso_recordatorio_enviado) {
-        const mensaje = `⚠️ *RECORDATORIO*\n\nCliente: ${pago.nombre}\nCédula: ${pago.cedula}\nRecibido hace: ${DIAS_AVISO_RECORDATORIO} días\n\n⏰ Quedan ${diasRestantes} días\n\n📊 https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TOKEN}`;
-        await notificarContadora(mensaje);
+        const asunto = '⚠️ RECORDATORIO - Verificación pendiente - FibraNet';
+        const mensaje = `
+RECORDATORIO - Verificación pendiente
+
+Cliente: ${pago.nombre}
+Cédula: ${pago.cedula}
+Recibido hace: ${DIAS_AVISO_RECORDATORIO} días
+
+Quedan ${diasRestantes} días para verificar
+
+Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TOKEN}
+`;
+        await notificarContadora(asunto, mensaje);
         pago.aviso_recordatorio_enviado = true;
         console.log(`📨 [CRON] Recordatorio: ${pago.cedula}`);
       }
@@ -855,7 +867,14 @@ async function verificarVencimientos() {
           } catch (e) { console.error('Error notificar:', e.message); }
         }
 
-        await notificarContadora(`🔴 *AUTO-CORTE*\n\nCliente: ${pago.nombre}\nCédula: ${pago.cedula}\n\nServicio suspendido.`);
+        await notificarContadora('🔴 AUTO-CORTE - FibraNet', `
+AUTO-CORTE POR FALTA DE VERIFICACIÓN
+
+Cliente: ${pago.nombre}
+Cédula: ${pago.cedula}
+
+Servicio suspendido automáticamente.
+`);
         continue;
       }
 
