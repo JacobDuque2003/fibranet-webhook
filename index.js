@@ -498,17 +498,13 @@ app.post('/pago/comprobante', async (req, res) => {
       });
     }
 
-    // Activar servicio en MikroWisp
+    // Intentar activar servicio en MikroWisp (pero continuar si falla)
     const activado = await activarServicioMikroWisp(idcliente);
-    if (!activado) {
-      console.error(`❌ [COMPROBANTE] No se pudo activar: ${cedula}`);
-      return res.json({
-        activado: false,
-        mensaje: `⚠️ Recibimos su comprobante pero hubo un problema.\n\nUn asesor le contactará.`
-      });
+    if (activado) {
+      console.log(`⚡ [COMPROBANTE] Servicio activado en MikroWisp: ${cedula}`);
+    } else {
+      console.log(`⚠️ [COMPROBANTE] MikroWisp falló, pero continuamos. Contadora activará manualmente: ${cedula}`);
     }
-
-    console.log(`⚡ [COMPROBANTE] Servicio activado: ${cedula}`);
 
     // Guardar en RAM
     const ahora = new Date();
