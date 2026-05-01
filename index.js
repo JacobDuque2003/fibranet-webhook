@@ -900,5 +900,5 @@ app.listen(PORT, () => {
   console.log(`🚀 FibraNet Webhook v6.1.1 (RAM) en puerto ${PORT}`);
   console.log(`📊 Sistema: Promesa de Pago ${DIAS_PROMESA} días`);
   console.log(`💾 Base de datos en RAM - se resetea al reiniciar`);
-  console.log(`👤 Contadora: ${CONTADORA_TELEFONO}`);
+  console.log(`📧 Contadora: ${CONTADORA_EMAIL}`);
 });
