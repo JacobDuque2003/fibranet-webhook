@@ -19,7 +19,7 @@ const MERCATELY_API_KEY = process.env.MERCATELY_API_KEY;
 // 🎓 NUEVO EN v6.1: Configuración del sistema de promesa de pago
 const DIAS_PROMESA = 10;
 const DIAS_AVISO_RECORDATORIO = 8;
-const CONTADORA_TELEFONO = '+593988773995';
+const CONTADORA_TELEFONO = '+593986675251';
 const CONTADORA_EMAIL = 'oscartapia@outlook.com';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'fibranet-admin-2026';
 const PAGOS_DB_FILENAME = 'pagos_pendientes.json';
