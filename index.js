@@ -161,18 +161,20 @@ async function notificarContadora(asunto, mensaje) {
 
 async function activarServicioMikroWisp(idcliente) {
   try {
-    const response = await fetch(`${MIKROWISP_URL}/api/v1/SetStatusClient`, {
+    const response = await fetch(`${MIKROWISP_URL}/api/v1/ActiveService`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'accept': 'application/json',
+        'Content-Type': 'application/json' 
+      },
       body: JSON.stringify({
         token: MIKROWISP_TOKEN,
-        idcliente: idcliente,
-        estado: 'activo',
-        motivo: 'Pago recibido - Promesa 10 días'
+        idcliente: parseInt(idcliente)
       })
     });
     const data = await response.json();
-    return data.estado === 'exito';
+    console.log(`🔧 [MIKROWISP] Respuesta activación:`, JSON.stringify(data));
+    return response.ok && data.estado === 'exito';
   } catch (err) {
     console.error('❌ Error activar servicio:', err.message);
     return false;
