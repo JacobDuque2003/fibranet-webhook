@@ -686,7 +686,8 @@ app.post('/soporte/cambio-clave', async (req, res) => {
     // Validación: mínimo 8 caracteres
     if (!nueva_clave || nueva_clave.length < 8) {
       return res.json({
-        mensaje: `⚠️ *Error en la contraseña*\n\nLa contraseña debe tener *mínimo 8 caracteres*.\n\n📝 Recomendaciones:\n• Mínimo 8 caracteres\n• Combina letras y números\n• Sin espacios\n\n🔄 Por favor, intenta nuevamente con una contraseña más segura.`
+        error: true,
+        mensaje: `⚠️ *Contraseña muy corta*\n\nDebe tener *mínimo 8 caracteres*.\n\n📝 Recomendaciones:\n• Mínimo 8 caracteres\n• Combina letras y números\n• Sin espacios\n\n🔄 Por favor, envía tu nueva contraseña.`
       });
     }
     
@@ -698,7 +699,11 @@ app.post('/soporte/cambio-clave', async (req, res) => {
         nombreCliente = capitalizarNombre(r.clientes[0].nombre);
       }
     }
-    res.json({ ticket, mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` });
+    res.json({ 
+      ticket, 
+      error: false,
+      mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` 
+    });
   } catch (err) {
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
