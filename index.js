@@ -509,23 +509,11 @@ app.post('/pago/comprobante', async (req, res) => {
     
     // Calcular deuda total de TODOS los servicios
     let deudaTotal = 0;
-    let todosLosServicios = [];
-    
     clientes.forEach(cliente => {
       deudaTotal += parseFloat(cliente.facturacion?.total_facturas || 0);
-      const servicios = cliente.servicios || [];
-      servicios.forEach(servicio => {
-        todosLosServicios.push({
-          idcliente: cliente.id,
-          idservicio: servicio.id || servicio.idservicio,
-          nombre: cliente.nombre,
-          perfil: servicio.perfil
-        });
-      });
     });
 
-    console.log(`👤 [COMPROBANTE] ${nombreCompleto} | Clientes: ${clientes.length} | Servicios: ${todosLosServicios.length} | Deuda: $${deudaTotal.toFixed(2)}`);
-    console.log(`🔍 [DEBUG] Servicios completos:`, JSON.stringify(todosLosServicios, null, 2));
+    console.log(`👤 [COMPROBANTE] ${nombreCompleto} | Clientes: ${clientes.length} | Deuda: $${deudaTotal.toFixed(2)}`);
 
     if (deudaTotal === 0) {
       return res.json({ activado: false, mensaje: `✅ Estimado(a) ${nombreCompleto}, no tiene deudas pendientes.\n\n¡Está al día! 🎉` });
@@ -543,28 +531,36 @@ app.post('/pago/comprobante', async (req, res) => {
       console.log(`⚠️ [COMPROBANTE] Ya tiene pago pendiente: ${cedula}`);
       return res.json({
         activado: true,
-        mensaje: `✅ *${nombreCompleto}*, ya tenemos su comprobante registrado.\n\nSu${todosLosServicios.length > 1 ? 's' : ''} servicio${todosLosServicios.length > 1 ? 's están' : ' está'} activo${todosLosServicios.length > 1 ? 's' : ''} y ${todosLosServicios.length > 1 ? 'serán verificados' : 'será verificado'} en breve.`
+        mensaje: `✅ *${nombreCompleto}*, ya tenemos su comprobante registrado.\n\nSu${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's están' : ' está'} activo${clientes.length > 1 ? 's' : ''} y ${clientes.length > 1 ? 'serán verificados' : 'será verificado'} en breve.`
       });
     }
 
-    // Activar TODOS los servicios en MikroWisp
+    // Activar TODOS los CLIENTES (cada cliente es un servicio en MikroWisp)
     let serviciosActivados = 0;
-    for (const servicio of todosLosServicios) {
-      const idServicio = servicio.idservicio || servicio.idcliente;
-      const activado = await activarServicioMikroWisp(idServicio);
+    for (const cliente of clientes) {
+      const activado = await activarServicioMikroWisp(cliente.id);
       if (activado) {
         serviciosActivados++;
-        console.log(`✅ [COMPROBANTE] Servicio activado: ${servicio.nombre} - ${servicio.perfil} (ID: ${idServicio})`);
+        const servicioNombre = cliente.servicios?.[0]?.perfil || 'Servicio';
+        console.log(`✅ [COMPROBANTE] Cliente activado: ${cliente.nombre} - ${servicioNombre} (ID: ${cliente.id})`);
       } else {
-        console.log(`⚠️ [COMPROBANTE] No se pudo activar: ${servicio.nombre} - ${servicio.perfil} (ID: ${idServicio})`);
+        console.log(`⚠️ [COMPROBANTE] No se pudo activar: ${cliente.nombre} (ID: ${cliente.id})`);
       }
     }
 
     if (serviciosActivados > 0) {
-      console.log(`⚡ [COMPROBANTE] Total activados: ${serviciosActivados}/${todosLosServicios.length} servicios`);
+      console.log(`⚡ [COMPROBANTE] Total activados: ${serviciosActivados}/${clientes.length} servicios`);
     } else {
       console.log(`⚠️ [COMPROBANTE] MikroWisp falló, pero continuamos. Contadora activará manualmente: ${cedula}`);
     }
+
+    // Preparar lista de servicios para guardar
+    const listaServicios = clientes.map(c => ({
+      id: c.id,
+      nombre: c.nombre,
+      plan: c.servicios?.[0]?.perfil || 'N/A',
+      activado: true
+    }));
 
     // Guardar en RAM
     const ahora = new Date();
@@ -575,13 +571,8 @@ app.post('/pago/comprobante', async (req, res) => {
       nombre: nombreCompleto,
       idcliente: primerCliente.id,
       telefono: telefono,
-      plan: todosLosServicios.length > 1 ? `${todosLosServicios.length} servicios` : todosLosServicios[0]?.perfil || 'N/A',
-      servicios: todosLosServicios.map(s => ({
-        id: s.idservicio || s.idcliente,
-        nombre: s.nombre,
-        plan: s.perfil,
-        activado: true
-      })),
+      plan: clientes.length > 1 ? `${clientes.length} servicios` : (clientes[0].servicios?.[0]?.perfil || 'N/A'),
+      servicios: listaServicios,
       deuda: deudaTotal,
       fecha_recibido: ahora.toISOString(),
       fecha_limite: fechaLimite.toISOString(),
@@ -601,8 +592,8 @@ Cliente: ${nombreCompleto}
 Cédula: ${cedula}
 Teléfono: ${telefono}
 Deuda total: $${deudaTotal.toFixed(2)}
-Servicios activados: ${serviciosActivados}/${todosLosServicios.length}
-${todosLosServicios.map(s => `  - ${s.nombre} (${s.perfil})`).join('\n')}
+Servicios activados: ${serviciosActivados}/${clientes.length}
+${listaServicios.map(s => `  - ${s.nombre} (${s.plan})`).join('\n')}
 Fecha: ${ahora.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}
 
 Plazo de verificación: ${DIAS_PROMESA} días
@@ -615,7 +606,7 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
 
     return res.json({
       activado: true,
-      mensaje: `✅ *¡Pago recibido!*\n\nHemos recibido su comprobante.\nSu${todosLosServicios.length > 1 ? 's' : ''} servicio${todosLosServicios.length > 1 ? 's se están activando' : ' se está activando'}.\n\n📡 Estimado(a) Sr(a). *${nombreCompleto}*\nDisfrute de su internet 🌐\n\n¡Gracias por confiar en FibraNet!`
+      mensaje: `✅ *¡Pago recibido!*\n\nHemos recibido su comprobante.\nSu${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's se están activando' : ' se está activando'}.\n\n📡 Estimado(a) Sr(a). *${nombreCompleto}*\nDisfrute de su internet 🌐\n\n¡Gracias por confiar en FibraNet!`
     });
 
   } catch (err) {
@@ -641,11 +632,11 @@ app.post('/cliente/plan', async (req, res) => {
       const servicio = clientes[0].servicios[0];
       const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
       return res.json({
-        mensaje: `📡 *Información de su servicio*\n\n👤 ${nombreCompleto}\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Cliente desde: ${servicio.instalado}`
+        mensaje: `📡 *Información de su servicio*\n\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Cliente desde: ${servicio.instalado}`
       });
     } else {
       // Múltiples servicios - mostrar lista
-      let mensaje = `📡 *Sus servicios contratados*\n\n👤 ${nombreCompleto}\n`;
+      let mensaje = `📡 *Sus servicios contratados*\n`;
       let servicioNum = 1;
       
       clientes.forEach(cliente => {
@@ -691,13 +682,23 @@ app.post('/soporte/reporte', async (req, res) => {
 app.post('/soporte/cambio-clave', async (req, res) => {
   try {
     const { cedula, nueva_clave } = req.body;
+    
+    // Validación: mínimo 8 caracteres
+    if (!nueva_clave || nueva_clave.length < 8) {
+      return res.json({
+        mensaje: `⚠️ *Error en la contraseña*\n\nLa contraseña debe tener *mínimo 8 caracteres*.\n\n📝 Recomendaciones:\n• Mínimo 8 caracteres\n• Combina letras y números\n• Sin espacios\n\n🔄 Por favor, intenta nuevamente con una contraseña más segura.`
+      });
+    }
+    
     const ticket = `CLV-${Date.now().toString().slice(-6)}`;
     let nombreCliente = 'Cliente';
     if (cedula) {
       const r = await buscarClientePorCedula(cedula);
-      if (r.exito) nombreCliente = capitalizarNombre(r.cliente.nombre);
+      if (r.exito && r.clientes?.length > 0) {
+        nombreCliente = capitalizarNombre(r.clientes[0].nombre);
+      }
     }
-    res.json({ ticket, mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n👤 ${nombreCliente}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` });
+    res.json({ ticket, mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` });
   } catch (err) {
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
