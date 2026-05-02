@@ -113,7 +113,7 @@ async function buscarClientePorCedula(cedula, useCache = true) {
     const cached = cacheClientes.get(cedula);
     if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
       console.log(`💾 [CACHE] Cliente ${cedula} del caché`);
-      return { exito: true, cliente: cached.data };
+      return { exito: true, clientes: cached.data };
     }
   }
 
@@ -126,8 +126,9 @@ async function buscarClientePorCedula(cedula, useCache = true) {
     const data = await response.json();
     if (data.estado !== 'exito' || !data.datos?.length) return { exito: false, error: 'Cliente no encontrado' };
 
-    cacheClientes.set(cedula, { data: data.datos[0], timestamp: Date.now() });
-    return { exito: true, cliente: data.datos[0] };
+    // Retornar TODOS los clientes con esta cédula
+    cacheClientes.set(cedula, { data: data.datos, timestamp: Date.now() });
+    return { exito: true, clientes: data.datos };
   } catch (err) {
     console.error('Error buscar cliente:', err.message);
     return { exito: false, error: err.message };
@@ -373,25 +374,37 @@ app.post('/cliente/buscar', async (req, res) => {
       return res.json({ encontrado: false, transferir: false, mensaje: `❌ No encontré ningún cliente con la cédula *${cedula}*.\n\n¿Qué desea hacer?` });
     }
 
-    const cliente = resultado.cliente;
-    const deuda = parseFloat(cliente.facturacion?.total_facturas || 0);
-    const facturasPendientes = parseInt(cliente.facturacion?.facturas_nopagadas || 0);
-    const servicio = cliente.servicios?.[0];
-    const nombreCompleto = capitalizarNombre(cliente.nombre);
-    const esPrimeraVez = !yaFueSaludado(cliente.cedula);
+    const clientes = resultado.clientes;
+    const primerCliente = clientes[0];
+    
+    // Sumar deuda total de TODOS los servicios
+    let deudaTotal = 0;
+    let facturasTotal = 0;
+    clientes.forEach(c => {
+      deudaTotal += parseFloat(c.facturacion?.total_facturas || 0);
+      facturasTotal += parseInt(c.facturacion?.facturas_nopagadas || 0);
+    });
+
+    const nombreCompleto = capitalizarNombre(primerCliente.nombre);
+    const esPrimeraVez = !yaFueSaludado(cedula);
 
     let mensajeBienvenida;
     if (esPrimeraVez) {
       mensajeBienvenida = `✅ *Identidad verificada*\n\nBienvenido(a) Sr(a). *${nombreCompleto}*\n\n📋 ¿En qué podemos ayudarle hoy?`;
-      marcarComoSaludado(cliente.cedula);
+      marcarComoSaludado(cedula);
     } else {
       mensajeBienvenida = `📋 ¿En qué más podemos ayudarle?`;
     }
 
     return res.json({
-      encontrado: true, id: cliente.id, nombre: nombreCompleto,
-      cedula: cliente.cedula, deuda, facturasPendientes,
-      plan: servicio?.perfil || 'N/A', mensaje: mensajeBienvenida
+      encontrado: true, 
+      id: primerCliente.id, 
+      nombre: nombreCompleto,
+      cedula: cedula, 
+      deuda: deudaTotal, 
+      facturasPendientes: facturasTotal,
+      plan: clientes.length > 1 ? `${clientes.length} servicios` : (clientes[0].servicios?.[0]?.perfil || 'N/A'), 
+      mensaje: mensajeBienvenida
     });
   } catch (err) {
     res.status(500).json({ encontrado: false, transferir: true, mensaje: '⚠️ Error del sistema.' });
@@ -406,16 +419,43 @@ app.post('/cliente/deuda', async (req, res) => {
     const resultado = await buscarClientePorCedula(cedula);
     if (!resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
-    const cliente = resultado.cliente;
-    const deuda = parseFloat(cliente.facturacion?.total_facturas || 0);
-    const facturas = parseInt(cliente.facturacion?.facturas_nopagadas || 0);
-    const nombreCompleto = capitalizarNombre(cliente.nombre);
+    const clientes = resultado.clientes;
+    const primerCliente = clientes[0];
+    const nombreCompleto = capitalizarNombre(primerCliente.nombre);
+    
+    // Calcular deuda total
+    let deudaTotal = 0;
+    let facturasTotal = 0;
+    clientes.forEach(c => {
+      deudaTotal += parseFloat(c.facturacion?.total_facturas || 0);
+      facturasTotal += parseInt(c.facturacion?.facturas_nopagadas || 0);
+    });
 
-    if (facturas === 0) return res.json({ deuda: 0, mensaje: `✅ *Estimado(a) cliente*, no tiene deudas pendientes.\n\n👤 ${nombreCompleto}\n\n¡Gracias por mantener su pago al día! 🎉` });
+    if (facturasTotal === 0) {
+      return res.json({ 
+        deuda: 0, 
+        mensaje: `✅ *Estimado(a) cliente*, no tiene deudas pendientes.\n\n¡Gracias por mantener su pago al día! 🎉` 
+      });
+    }
+
+    // Crear desglose si tiene múltiples servicios
+    let desglose = '';
+    if (clientes.length > 1) {
+      desglose = '\n\n📋 *Desglose por servicio:*\n';
+      clientes.forEach((c, index) => {
+        const deuda = parseFloat(c.facturacion?.total_facturas || 0);
+        const facturas = parseInt(c.facturacion?.facturas_nopagadas || 0);
+        const servicioNombre = c.nombre || `Servicio ${index + 1}`;
+        if (deuda > 0) {
+          desglose += `\n${index + 1}. ${servicioNombre}\n   💵 $${deuda.toFixed(2)} (${facturas} factura${facturas > 1 ? 's' : ''})`;
+        }
+      });
+    }
 
     return res.json({
-      deuda, facturas,
-      mensaje: `💰 *Estado de cuenta*\n\n👤 ${nombreCompleto}\n📋 Facturas pendientes: *${facturas}*\n💵 Total a pagar: *$${deuda.toFixed(2)}*\n\nPara pagar seleccione *"📸 Pagar mi servicio"* en el menú.`
+      deuda: deudaTotal, 
+      facturas: facturasTotal,
+      mensaje: `💰 *Estado de cuenta*\n\n💵 Total a pagar: *$${deudaTotal.toFixed(2)}*\n📋 Facturas pendientes: *${facturasTotal}*${desglose}\n\nPara pagar seleccione *"📸 Pagar mi servicio"* en el menú.`
     });
   } catch (err) {
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
@@ -430,13 +470,18 @@ app.post('/pago/info', async (req, res) => {
     const resultado = await buscarClientePorCedula(cedula);
     if (!resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
-    const cliente = resultado.cliente;
-    const deuda = parseFloat(cliente.facturacion?.total_facturas || 0);
-    const facturas = parseInt(cliente.facturacion?.facturas_nopagadas || 0);
+    const clientes = resultado.clientes;
+    
+    let deudaTotal = 0;
+    let facturasTotal = 0;
+    clientes.forEach(c => {
+      deudaTotal += parseFloat(c.facturacion?.total_facturas || 0);
+      facturasTotal += parseInt(c.facturacion?.facturas_nopagadas || 0);
+    });
 
-    if (facturas === 0) return res.json({ deuda: 0, mensaje: `✅ No tiene deudas pendientes. ¡Está al día! 🎉` });
+    if (facturasTotal === 0) return res.json({ deuda: 0, mensaje: `✅ No tiene deudas pendientes. ¡Está al día! 🎉` });
 
-    res.json({ deuda, mensaje: `${CUENTAS_BANCARIAS}\n\n💵 *Su deuda actual: $${deuda.toFixed(2)}*\n\n📸 Realice su transferencia y envíenos la *foto del comprobante* aquí mismo para activar su servicio.` });
+    res.json({ deuda: deudaTotal, mensaje: `${CUENTAS_BANCARIAS}\n\n💵 *Su deuda total: $${deudaTotal.toFixed(2)}*\n\n📸 Realice su transferencia y envíenos la *foto del comprobante* aquí mismo para activar su${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's' : ''}.` });
   } catch (err) {
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
@@ -448,7 +493,7 @@ app.post('/pago/info', async (req, res) => {
 app.post('/pago/comprobante', async (req, res) => {
   try {
     const { cedula } = req.body;
-    console.log(`📸 [COMPROBANTE v6.1.1] Cédula: "${cedula}"`);
+    console.log(`📸 [COMPROBANTE v6.3] Cédula: "${cedula}"`);
 
     if (!cedula) return res.json({ activado: false, mensaje: '⚠️ Error: no se identificó al cliente.' });
 
@@ -457,16 +502,32 @@ app.post('/pago/comprobante', async (req, res) => {
       return res.json({ activado: false, mensaje: '❌ No se encontró información del cliente.' });
     }
 
-    const cliente = resultadoCliente.cliente;
-    const idcliente = cliente.id;
-    const nombreCompleto = capitalizarNombre(cliente.nombre);
-    const deuda = parseFloat(cliente.facturacion?.total_facturas || 0);
-    const telefono = cliente.movil || cliente.telefono || '';
-    const servicios = cliente.servicios || [];
+    const clientes = resultadoCliente.clientes;
+    const primerCliente = clientes[0];
+    const nombreCompleto = capitalizarNombre(primerCliente.nombre);
+    const telefono = primerCliente.movil || primerCliente.telefono || '';
+    
+    // Calcular deuda total de TODOS los servicios
+    let deudaTotal = 0;
+    let todosLosServicios = [];
+    
+    clientes.forEach(cliente => {
+      deudaTotal += parseFloat(cliente.facturacion?.total_facturas || 0);
+      const servicios = cliente.servicios || [];
+      servicios.forEach(servicio => {
+        todosLosServicios.push({
+          idcliente: cliente.id,
+          idservicio: servicio.id || servicio.idservicio,
+          nombre: cliente.nombre,
+          perfil: servicio.perfil
+        });
+      });
+    });
 
-    console.log(`👤 [COMPROBANTE] ${nombreCompleto} | Servicios: ${servicios.length} | Deuda: $${deuda.toFixed(2)}`);
+    console.log(`👤 [COMPROBANTE] ${nombreCompleto} | Clientes: ${clientes.length} | Servicios: ${todosLosServicios.length} | Deuda: $${deudaTotal.toFixed(2)}`);
+    console.log(`🔍 [DEBUG] Servicios completos:`, JSON.stringify(todosLosServicios, null, 2));
 
-    if (deuda === 0) {
+    if (deudaTotal === 0) {
       return res.json({ activado: false, mensaje: `✅ Estimado(a) ${nombreCompleto}, no tiene deudas pendientes.\n\n¡Está al día! 🎉` });
     }
 
@@ -482,24 +543,25 @@ app.post('/pago/comprobante', async (req, res) => {
       console.log(`⚠️ [COMPROBANTE] Ya tiene pago pendiente: ${cedula}`);
       return res.json({
         activado: true,
-        mensaje: `✅ *${nombreCompleto}*, ya tenemos su comprobante registrado.\n\nSu servicio está activo y será verificado en breve.`
+        mensaje: `✅ *${nombreCompleto}*, ya tenemos su comprobante registrado.\n\nSu${todosLosServicios.length > 1 ? 's' : ''} servicio${todosLosServicios.length > 1 ? 's están' : ' está'} activo${todosLosServicios.length > 1 ? 's' : ''} y ${todosLosServicios.length > 1 ? 'serán verificados' : 'será verificado'} en breve.`
       });
     }
 
-    // Activar TODOS los servicios del cliente en MikroWisp
+    // Activar TODOS los servicios en MikroWisp
     let serviciosActivados = 0;
-    for (const servicio of servicios) {
-      const activado = await activarServicioMikroWisp(servicio.idservicio);
+    for (const servicio of todosLosServicios) {
+      const idServicio = servicio.idservicio || servicio.idcliente;
+      const activado = await activarServicioMikroWisp(idServicio);
       if (activado) {
         serviciosActivados++;
-        console.log(`✅ [COMPROBANTE] Servicio activado: ${servicio.nombre || servicio.perfil} (ID: ${servicio.idservicio})`);
+        console.log(`✅ [COMPROBANTE] Servicio activado: ${servicio.nombre} - ${servicio.perfil} (ID: ${idServicio})`);
       } else {
-        console.log(`⚠️ [COMPROBANTE] No se pudo activar servicio: ${servicio.nombre || servicio.perfil} (ID: ${servicio.idservicio})`);
+        console.log(`⚠️ [COMPROBANTE] No se pudo activar: ${servicio.nombre} - ${servicio.perfil} (ID: ${idServicio})`);
       }
     }
 
     if (serviciosActivados > 0) {
-      console.log(`⚡ [COMPROBANTE] Total activados: ${serviciosActivados}/${servicios.length} servicios`);
+      console.log(`⚡ [COMPROBANTE] Total activados: ${serviciosActivados}/${todosLosServicios.length} servicios`);
     } else {
       console.log(`⚠️ [COMPROBANTE] MikroWisp falló, pero continuamos. Contadora activará manualmente: ${cedula}`);
     }
@@ -511,16 +573,16 @@ app.post('/pago/comprobante', async (req, res) => {
     const pago = {
       cedula: cedula,
       nombre: nombreCompleto,
-      idcliente: idcliente,
+      idcliente: primerCliente.id,
       telefono: telefono,
-      plan: servicios.length > 1 ? `${servicios.length} servicios` : (servicios[0]?.perfil || 'N/A'),
-      servicios: servicios.map(s => ({
-        id: s.idservicio,
-        nombre: s.nombre || s.perfil,
+      plan: todosLosServicios.length > 1 ? `${todosLosServicios.length} servicios` : todosLosServicios[0]?.perfil || 'N/A',
+      servicios: todosLosServicios.map(s => ({
+        id: s.idservicio || s.idcliente,
+        nombre: s.nombre,
         plan: s.perfil,
         activado: true
       })),
-      deuda: deuda,
+      deuda: deudaTotal,
       fecha_recibido: ahora.toISOString(),
       fecha_limite: fechaLimite.toISOString(),
       estado: 'PENDIENTE',
@@ -538,9 +600,9 @@ NUEVO PAGO PENDIENTE DE VERIFICACIÓN
 Cliente: ${nombreCompleto}
 Cédula: ${cedula}
 Teléfono: ${telefono}
-Deuda: $${deuda.toFixed(2)}
-Servicios activados: ${serviciosActivados}/${servicios.length}
-${servicios.map(s => `  - ${s.nombre || s.perfil}`).join('\n')}
+Deuda total: $${deudaTotal.toFixed(2)}
+Servicios activados: ${serviciosActivados}/${todosLosServicios.length}
+${todosLosServicios.map(s => `  - ${s.nombre} (${s.perfil})`).join('\n')}
 Fecha: ${ahora.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}
 
 Plazo de verificación: ${DIAS_PROMESA} días
@@ -553,7 +615,7 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
 
     return res.json({
       activado: true,
-      mensaje: `✅ *¡Pago recibido!*\n\nHemos recibido su comprobante.\nSu servicio se está activando.\n\n📡 Estimado(a) Sr(a). *${nombreCompleto}*\nDisfrute de su internet 🌐\n\n¡Gracias por confiar en FibraNet!`
+      mensaje: `✅ *¡Pago recibido!*\n\nHemos recibido su comprobante.\nSu${todosLosServicios.length > 1 ? 's' : ''} servicio${todosLosServicios.length > 1 ? 's se están activando' : ' se está activando'}.\n\n📡 Estimado(a) Sr(a). *${nombreCompleto}*\nDisfrute de su internet 🌐\n\n¡Gracias por confiar en FibraNet!`
     });
 
   } catch (err) {
@@ -570,16 +632,36 @@ app.post('/cliente/plan', async (req, res) => {
     const resultado = await buscarClientePorCedula(cedula);
     if (!resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
-    const cliente = resultado.cliente;
-    const servicio = cliente.servicios?.[0];
-    if (!servicio) return res.json({ mensaje: '❌ No se encontró información del servicio.' });
+    const clientes = resultado.clientes;
+    const primerCliente = clientes[0];
+    const nombreCompleto = capitalizarNombre(primerCliente.nombre);
 
-    const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
-    const nombreCompleto = capitalizarNombre(cliente.nombre);
-
-    res.json({
-      mensaje: `📡 *Información de su servicio*\n\n👤 ${nombreCompleto}\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Cliente desde: ${servicio.instalado}`
-    });
+    if (clientes.length === 1 && clientes[0].servicios?.length === 1) {
+      // Un solo servicio - mostrar detalle
+      const servicio = clientes[0].servicios[0];
+      const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
+      return res.json({
+        mensaje: `📡 *Información de su servicio*\n\n👤 ${nombreCompleto}\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Cliente desde: ${servicio.instalado}`
+      });
+    } else {
+      // Múltiples servicios - mostrar lista
+      let mensaje = `📡 *Sus servicios contratados*\n\n👤 ${nombreCompleto}\n`;
+      let servicioNum = 1;
+      
+      clientes.forEach(cliente => {
+        const servicios = cliente.servicios || [];
+        servicios.forEach(servicio => {
+          const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
+          mensaje += `\n${servicioNum}. *${cliente.nombre}*\n`;
+          mensaje += `   📋 ${servicio.perfil}\n`;
+          mensaje += `   💰 $${servicio.costo}/mes\n`;
+          mensaje += `   ${estadoIcon} ${servicio.status_user}\n`;
+          servicioNum++;
+        });
+      });
+      
+      return res.json({ mensaje });
+    }
   } catch (err) {
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
@@ -958,7 +1040,17 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
 
       if (diasRestantes <= 0) {
         console.log(`🔴 [CRON] Auto-corte: ${pago.cedula}`);
-        await suspenderServicioMikroWisp(pago.idcliente, 'Auto-corte falta verificación');
+        
+        // Suspender TODOS los servicios del cliente
+        if (pago.servicios && pago.servicios.length > 0) {
+          for (const servicio of pago.servicios) {
+            await suspenderServicioMikroWisp(servicio.id, 'Auto-corte falta verificación');
+            console.log(`🔴 [CRON] Servicio cortado: ${servicio.nombre} (ID: ${servicio.id})`);
+          }
+        } else {
+          await suspenderServicioMikroWisp(pago.idcliente, 'Auto-corte falta verificación');
+        }
+        
         pago.estado = 'AUTO_CORTADO';
         pago.fecha_auto_cortado = ahora.toISOString();
         pagosDB.rechazados.push(pago);
@@ -981,6 +1073,7 @@ AUTO-CORTE POR FALTA DE VERIFICACIÓN
 
 Cliente: ${pago.nombre}
 Cédula: ${pago.cedula}
+Servicios cortados: ${pago.servicios?.length || 1}
 
 Servicio suspendido automáticamente.
 `);
