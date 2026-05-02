@@ -300,14 +300,14 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.9 (Fix activación + servicios únicos)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.10 (Fix estado + clave)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi] = await Promise.all([verificarMikroWisp(), verificarMercatelyAPI()]);
   const mercately = verificarMercately();
   res.json({
     estado_general: '✅',
-    version: '6.9 (Fix activación + servicios únicos)',
+    version: '6.10 (Fix estado + clave)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately },
     pagos: {
       pendientes: pagosDB.pendientes.length,
@@ -685,46 +685,50 @@ app.post('/cliente/plan', async (req, res) => {
       const sesion = obtenerSesion(telefono);
       if (sesion) resultado = { exito: true, clientes: sesion.clientes };
     }
-    if (!resultado && cedula) resultado = await buscarClientePorCedula(cedula);
+    if (!resultado && cedula) resultado = await buscarClientePorCedula(cedula, false); // sin cache para datos frescos
     if (!resultado || !resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
     const clientes = resultado.clientes;
 
-    // 🆕 v6.8: Recopilar servicios únicos por ID a través de TODOS los clientes
-    // Problema: MikroWisp repite el mismo servicio en múltiples clientes
-    // Ej: servicio id:2769 aparece en cliente(1), cliente(2) y cliente(4)
-    const serviciosVistos = new Set();
-    const serviciosUnicos = [];
-
+    // v6.10: Usar estado del CLIENTE (no del servicio) para mostrar conexión
+    // MikroWisp: cliente.estado = "ACTIVO" | "SUSPENDIDO" | "CORTADO"
+    // El status_user del servicio no siempre refleja el estado real
+    
+    // Mostrar cada CLIENTE como un servicio (cada cliente = 1 conexión en FibraNet)
+    // Solo mostrar clientes ÚNICOS (algunos IDs se repiten en el array)
+    const clientesVistos = new Set();
+    const clientesUnicos = [];
     clientes.forEach(cliente => {
-      (cliente.servicios || []).forEach(servicio => {
-        if (!serviciosVistos.has(servicio.id)) {
-          serviciosVistos.add(servicio.id);
-          serviciosUnicos.push({
-            ...servicio,
-            nombreCliente: cliente.nombre,
-            idCliente: cliente.id
-          });
-        }
-      });
+      if (!clientesVistos.has(cliente.id)) {
+        clientesVistos.add(cliente.id);
+        clientesUnicos.push(cliente);
+      }
     });
 
-    console.log(`📡 [PLAN] Servicios totales: ${clientes.reduce((sum, c) => sum + (c.servicios?.length || 0), 0)} | Únicos: ${serviciosUnicos.length}`);
+    console.log(`📡 [PLAN] Clientes totales: ${clientes.length} | Únicos: ${clientesUnicos.length}`);
 
-    if (serviciosUnicos.length === 1) {
-      const servicio = serviciosUnicos[0];
-      const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
+    if (clientesUnicos.length === 1) {
+      const cliente = clientesUnicos[0];
+      const plan = cliente.servicios?.[0]?.perfil || 'N/A';
+      const costo = cliente.servicios?.[0]?.costo || '0.00';
+      // Usar estado del cliente para el ícono
+      const estadoIcon = cliente.estado === 'ACTIVO' ? '🟢' : '🔴';
+      const estadoTexto = cliente.estado === 'ACTIVO' ? 'CONECTADO' : cliente.estado;
       return res.json({
-        mensaje: `📡 *Información de su servicio*\n\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}/mes\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Instalado: ${servicio.instalado}`
+        mensaje: `📡 *Información de su servicio*\n\n👤 ${cliente.nombre.trim()}\n📋 Plan: *${plan}*\n💰 Costo mensual: $${costo}/mes\n${estadoIcon} Estado: *${estadoTexto}*`
       });
     } else {
       let mensaje = `📡 *Sus servicios contratados*\n`;
-      serviciosUnicos.forEach((servicio, index) => {
-        const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
-        mensaje += `\n${index + 1}. *${servicio.nombreCliente.trim()}*\n`;
-        mensaje += `   📋 ${servicio.perfil}\n`;
-        mensaje += `   💰 $${servicio.costo}/mes\n`;
-        mensaje += `   ${estadoIcon} ${servicio.status_user}\n`;
+      clientesUnicos.forEach((cliente, index) => {
+        const plan = cliente.servicios?.[0]?.perfil || 'N/A';
+        const costo = cliente.servicios?.[0]?.costo || '0.00';
+        // Usar estado del cliente para el ícono
+        const estadoIcon = cliente.estado === 'ACTIVO' ? '🟢' : '🔴';
+        const estadoTexto = cliente.estado === 'ACTIVO' ? 'CONECTADO' : cliente.estado;
+        mensaje += `\n${index + 1}. *${cliente.nombre.trim()}*\n`;
+        mensaje += `   📋 ${plan}\n`;
+        mensaje += `   💰 $${costo}/mes\n`;
+        mensaje += `   ${estadoIcon} ${estadoTexto}\n`;
       });
       return res.json({ mensaje });
     }
@@ -760,9 +764,11 @@ app.post('/soporte/cambio-clave', async (req, res) => {
   try {
     const { cedula, nueva_clave } = req.body;
     if (!nueva_clave || nueva_clave.length < 8) {
+      // v6.10: error=true para que Mercately NO vuelva al inicio del flujo
       return res.json({
         error: true,
-        mensaje: `⚠️ *Contraseña muy corta*\n\nDebe tener *mínimo 8 caracteres*.\n\n📝 Recomendaciones:\n• Mínimo 8 caracteres\n• Combina letras y números\n• Sin espacios\n\n🔄 Por favor, envía tu nueva contraseña.`
+        valida: false,
+        mensaje: `⚠️ *Contraseña muy corta*\n\nDebe tener *mínimo 8 caracteres*.\n\n📝 Recomendaciones:\n• Mínimo 8 caracteres\n• Combina letras y números\n• Sin espacios\n\n🔄 Por favor, envía tu nueva contraseña:`
       });
     }
     const ticket = `CLV-${Date.now().toString().slice(-6)}`;
@@ -771,7 +777,12 @@ app.post('/soporte/cambio-clave', async (req, res) => {
       const r = await buscarClientePorCedula(cedula);
       if (r.exito && r.clientes?.length > 0) nombreCliente = capitalizarNombre(r.clientes[0].nombre);
     }
-    res.json({ ticket, error: false, mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` });
+    res.json({ 
+      ticket, 
+      error: false,
+      valida: true,
+      mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n👤 ${nombreCliente}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` 
+    });
   } catch (err) {
     console.error('❌ [CAMBIO-CLAVE] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
@@ -1089,7 +1100,7 @@ setTimeout(verificarVencimientos, 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 FibraNet Webhook v6.9 (Fix activación + servicios únicos) en puerto ${PORT}`);
+  console.log(`🚀 FibraNet Webhook v6.10 (Fix estado + clave) en puerto ${PORT}`);
   console.log(`📊 Sistema: Promesa de Pago ${DIAS_PROMESA} días`);
   console.log(`💾 Base de datos en RAM - se resetea al reiniciar`);
   console.log(`🕐 Sesiones: ${SESION_TTL_MS / 60000} minutos de duración`);
