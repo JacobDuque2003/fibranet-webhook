@@ -16,13 +16,13 @@ const DRIVE_FOLDER_ID = '1nPVyL57elvt-164PXoxVWm0QiIZB-6Ir';
 const MERCATELY_API_URL = 'https://app.mercately.com/retailers/api/v1';
 const MERCATELY_API_KEY = process.env.MERCATELY_API_KEY;
 
-// v6.7: Configuración del sistema de promesa de pago
+// v6.8: Configuración del sistema de promesa de pago
 const DIAS_PROMESA = 10;
 const DIAS_AVISO_RECORDATORIO = 8;
 const CONTADORA_EMAIL = 'jiduque@utpl.edu.ec';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'fibranet-admin-2026';
 
-// v6.7: Configuración de sesiones
+// v6.8: Configuración de sesiones
 const SESION_TTL_MS = 10 * 60 * 1000; // 10 minutos
 
 const GOOGLE_CREDENTIALS = {
@@ -57,7 +57,7 @@ async function tienePagoPendiente(cedula) {
 }
 
 // ════════════════════════════════════════════════════════
-// v6.7: SISTEMA DE SESIONES (10 MINUTOS)
+// v6.8: SISTEMA DE SESIONES (10 MINUTOS)
 // ════════════════════════════════════════════════════════
 
 const sesionesClientes = new Map();
@@ -293,14 +293,14 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.7 (Sesiones inteligentes)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.8 (Fix servicios únicos)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi] = await Promise.all([verificarMikroWisp(), verificarMercatelyAPI()]);
   const mercately = verificarMercately();
   res.json({
     estado_general: '✅',
-    version: '6.7 (Sesiones inteligentes)',
+    version: '6.8 (Fix servicios únicos)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately },
     pagos: {
       pendientes: pagosDB.pendientes.length,
@@ -316,7 +316,7 @@ app.get('/health', async (req, res) => {
 app.get('/status', async (req, res) => {
   const [mikrowisp, mercatelyApi] = await Promise.all([verificarMikroWisp(), verificarMercatelyAPI()]);
   const mercately = verificarMercately();
-  const railway = { estado: 'ok', mensaje: `v6.7 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
+  const railway = { estado: 'ok', mensaje: `v6.8 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
   const todos_ok = mikrowisp.estado === 'ok' && mercatelyApi.estado === 'ok';
   const colorEstado = (e) => e === 'ok' ? '#22c55e' : e === 'advertencia' ? '#f59e0b' : e === 'desconocido' ? '#6b7280' : '#ef4444';
   const iconoEstado = (e) => e === 'ok' ? '🟢' : e === 'advertencia' ? '🟡' : e === 'desconocido' ? '⚪' : '🔴';
@@ -325,7 +325,7 @@ app.get('/status', async (req, res) => {
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="refresh" content="30"><title>FibraNet · Estado</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f1f5f9;min-height:100vh;padding:20px}.container{max-width:800px;margin:0 auto}.header{text-align:center;margin-bottom:30px;padding:30px 20px;background:rgba(255,255,255,0.05);border-radius:16px}.logo{font-size:32px;font-weight:700;margin-bottom:8px}.logo span{color:#60a5fa}.subtitle{color:#94a3b8;font-size:14px}.estado-general{margin-top:16px;padding:12px 24px;border-radius:999px;display:inline-block;font-weight:600;background:${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${todos_ok ? '#22c55e' : '#ef4444'}}.servicios{display:grid;gap:16px}.servicio{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px}.servicio-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.servicio-nombre{font-size:18px;font-weight:600}.badge{padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600}.metricas{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}.metrica{background:rgba(96,165,250,0.05);border:1px solid rgba(96,165,250,0.2);border-radius:12px;padding:16px;text-align:center}.metrica-numero{font-size:28px;font-weight:700;color:#60a5fa}.metrica-label{font-size:11px;color:#94a3b8;margin-top:4px}.footer{text-align:center;margin-top:30px;color:#64748b;font-size:13px}.footer a{color:#60a5fa;text-decoration:none}.aviso-ram{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:12px;padding:12px;margin-top:16px;text-align:center;color:#fbbf24;font-size:13px}</style>
 </head><body><div class="container">
-<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado · v6.7 - Sesiones inteligentes</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR'}</div></div>
+<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado · v6.8 - Sesiones inteligentes</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR'}</div></div>
 <div class="servicios">
 <div class="servicio" style="border-left:4px solid ${colorEstado(railway.estado)}"><div class="servicio-header"><div class="servicio-nombre">🚂 Railway</div><span class="badge" style="background:${colorEstado(railway.estado)}20;color:${colorEstado(railway.estado)}">${iconoEstado(railway.estado)} OK</span></div><div style="color:#cbd5e1;font-size:14px;margin-top:8px">${railway.mensaje}</div></div>
 <div class="servicio" style="border-left:4px solid ${colorEstado(mikrowisp.estado)}"><div class="servicio-header"><div class="servicio-nombre">🌐 MikroWisp</div><span class="badge" style="background:${colorEstado(mikrowisp.estado)}20;color:${colorEstado(mikrowisp.estado)}">${iconoEstado(mikrowisp.estado)} ${mikrowisp.estado.toUpperCase()}</span></div><div style="color:#cbd5e1;font-size:14px;margin-top:8px">${mikrowisp.mensaje}</div></div>
@@ -347,7 +347,7 @@ app.get('/status', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// v6.7: ENDPOINTS DE SESIÓN
+// v6.8: ENDPOINTS DE SESIÓN
 // ════════════════════════════════════════════════════════
 
 app.post('/cliente/sesion', async (req, res) => {
@@ -562,13 +562,13 @@ app.post('/pago/info', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// v6.7: PROCESAR COMPROBANTE CON PROMESA DE PAGO
+// v6.8: PROCESAR COMPROBANTE CON PROMESA DE PAGO
 // ════════════════════════════════════════════════════════
 
 app.post('/pago/comprobante', async (req, res) => {
   try {
     const { cedula, telefono, nombre_contacto } = req.body;
-    console.log(`📸 [COMPROBANTE v6.7] Cédula: "${cedula}" | Tel: ${telefono}`);
+    console.log(`📸 [COMPROBANTE v6.8] Cédula: "${cedula}" | Tel: ${telefono}`);
 
     let resultadoCliente;
     if (telefono) {
@@ -683,21 +683,41 @@ app.post('/cliente/plan', async (req, res) => {
 
     const clientes = resultado.clientes;
 
-    if (clientes.length === 1 && clientes[0].servicios?.length === 1) {
-      const servicio = clientes[0].servicios[0];
+    // 🆕 v6.8: Recopilar servicios únicos por ID a través de TODOS los clientes
+    // Problema: MikroWisp repite el mismo servicio en múltiples clientes
+    // Ej: servicio id:2769 aparece en cliente(1), cliente(2) y cliente(4)
+    const serviciosVistos = new Set();
+    const serviciosUnicos = [];
+
+    clientes.forEach(cliente => {
+      (cliente.servicios || []).forEach(servicio => {
+        if (!serviciosVistos.has(servicio.id)) {
+          serviciosVistos.add(servicio.id);
+          serviciosUnicos.push({
+            ...servicio,
+            nombreCliente: cliente.nombre,
+            idCliente: cliente.id
+          });
+        }
+      });
+    });
+
+    console.log(`📡 [PLAN] Servicios totales: ${clientes.reduce((sum, c) => sum + (c.servicios?.length || 0), 0)} | Únicos: ${serviciosUnicos.length}`);
+
+    if (serviciosUnicos.length === 1) {
+      const servicio = serviciosUnicos[0];
       const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
       return res.json({
-        mensaje: `📡 *Información de su servicio*\n\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Cliente desde: ${servicio.instalado}`
+        mensaje: `📡 *Información de su servicio*\n\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}/mes\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Instalado: ${servicio.instalado}`
       });
     } else {
       let mensaje = `📡 *Sus servicios contratados*\n`;
-      let servicioNum = 1;
-      clientes.forEach(cliente => {
-        (cliente.servicios || []).forEach(servicio => {
-          const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
-          mensaje += `\n${servicioNum}. *${cliente.nombre}*\n   📋 ${servicio.perfil}\n   💰 $${servicio.costo}/mes\n   ${estadoIcon} ${servicio.status_user}\n`;
-          servicioNum++;
-        });
+      serviciosUnicos.forEach((servicio, index) => {
+        const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
+        mensaje += `\n${index + 1}. *${servicio.nombreCliente.trim()}*\n`;
+        mensaje += `   📋 ${servicio.perfil}\n`;
+        mensaje += `   💰 $${servicio.costo}/mes\n`;
+        mensaje += `   ${estadoIcon} ${servicio.status_user}\n`;
       });
       return res.json({ mensaje });
     }
@@ -760,7 +780,7 @@ app.post('/despedida', (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// v6.7: DASHBOARD DE ADMINISTRACIÓN
+// v6.8: DASHBOARD DE ADMINISTRACIÓN
 // ════════════════════════════════════════════════════════
 
 app.get('/admin/:token', async (req, res) => {
@@ -996,7 +1016,7 @@ app.post('/admin/:token/rechazar', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// v6.7: VERIFICACIÓN DE VENCIMIENTOS (CRON)
+// v6.8: VERIFICACIÓN DE VENCIMIENTOS (CRON)
 // ════════════════════════════════════════════════════════
 
 async function verificarVencimientos() {
@@ -1062,7 +1082,7 @@ setTimeout(verificarVencimientos, 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 FibraNet Webhook v6.7 (Sesiones inteligentes) en puerto ${PORT}`);
+  console.log(`🚀 FibraNet Webhook v6.8 (Fix servicios únicos) en puerto ${PORT}`);
   console.log(`📊 Sistema: Promesa de Pago ${DIAS_PROMESA} días`);
   console.log(`💾 Base de datos en RAM - se resetea al reiniciar`);
   console.log(`🕐 Sesiones: ${SESION_TTL_MS / 60000} minutos de duración`);
