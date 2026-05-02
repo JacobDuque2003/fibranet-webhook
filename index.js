@@ -16,13 +16,13 @@ const DRIVE_FOLDER_ID = '1nPVyL57elvt-164PXoxVWm0QiIZB-6Ir';
 const MERCATELY_API_URL = 'https://app.mercately.com/retailers/api/v1';
 const MERCATELY_API_KEY = process.env.MERCATELY_API_KEY;
 
-// 🎓 v6.5: Configuración del sistema de promesa de pago
+// v6.7: Configuración del sistema de promesa de pago
 const DIAS_PROMESA = 10;
 const DIAS_AVISO_RECORDATORIO = 8;
 const CONTADORA_EMAIL = 'jiduque@utpl.edu.ec';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'fibranet-admin-2026';
 
-// 🆕 v6.6: Configuración de sesiones
+// v6.7: Configuración de sesiones
 const SESION_TTL_MS = 10 * 60 * 1000; // 10 minutos
 
 const GOOGLE_CREDENTIALS = {
@@ -33,7 +33,7 @@ const GOOGLE_CREDENTIALS = {
 let ultimoPingMercately = null;
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.5: BASE DE DATOS EN MEMORIA RAM
+// BASE DE DATOS EN MEMORIA RAM
 // ════════════════════════════════════════════════════════
 
 let pagosDB = {
@@ -42,71 +42,6 @@ let pagosDB = {
   rechazados: [],
   lista_negra: []
 };
-
-// ════════════════════════════════════════════════════════
-// 🆕 v6.6: SISTEMA DE SESIONES (10 MINUTOS)
-// ════════════════════════════════════════════════════════
-
-const sesionesClientes = new Map();
-
-// Guardar sesión de cliente
-function guardarSesion(telefono, cedula, nombre, clientes) {
-  sesionesClientes.set(telefono, {
-    cedula,
-    nombre,
-    clientes, // Array con todos los servicios
-    timestamp: Date.now()
-  });
-  
-  console.log(`💾 [SESION] Guardada para ${telefono} (${nombre}) - Expira en 10 min`);
-  
-  // Auto-limpiar después de 10 minutos
-  setTimeout(() => {
-    if (sesionesClientes.has(telefono)) {
-      sesionesClientes.delete(telefono);
-      console.log(`🗑️ [SESION] Expirada para ${telefono}`);
-    }
-  }, SESION_TTL_MS);
-}
-
-// Obtener sesión activa
-function obtenerSesion(telefono) {
-  const sesion = sesionesClientes.get(telefono);
-  if (!sesion) return null;
-  
-  // Verificar si expiró (10 min)
-  const tiempoTranscurrido = Date.now() - sesion.timestamp;
-  if (tiempoTranscurrido > SESION_TTL_MS) {
-    sesionesClientes.delete(telefono);
-    console.log(`⏰ [SESION] Expirada por timeout: ${telefono}`);
-    return null;
-  }
-  
-  // Actualizar timestamp (renovar sesión con cada uso)
-  sesion.timestamp = Date.now();
-  return sesion;
-}
-
-// Cerrar sesión manualmente
-function cerrarSesion(telefono) {
-  if (sesionesClientes.has(telefono)) {
-    sesionesClientes.delete(telefono);
-    console.log(`🚪 [SESION] Cerrada manualmente: ${telefono}`);
-    return true;
-  }
-  return false;
-}
-
-// Funciones simplificadas para DB en RAM
-function obtenerPagosDB() {
-  return Promise.resolve(pagosDB);
-}
-
-function guardarPagosDB(db) {
-  pagosDB = db;
-  console.log(`💾 [RAM DB] Guardado: ${db.pendientes.length} pendientes, ${db.verificados.length} verificados`);
-  return Promise.resolve(true);
-}
 
 async function agregarPagoPendiente(pago) {
   pagosDB.pendientes.push(pago);
@@ -122,11 +57,55 @@ async function tienePagoPendiente(cedula) {
 }
 
 // ════════════════════════════════════════════════════════
+// v6.7: SISTEMA DE SESIONES (10 MINUTOS)
+// ════════════════════════════════════════════════════════
+
+const sesionesClientes = new Map();
+
+function guardarSesion(telefono, cedula, nombre, clientes) {
+  sesionesClientes.set(telefono, {
+    cedula,
+    nombre,
+    clientes,
+    timestamp: Date.now()
+  });
+  console.log(`💾 [SESION] Guardada para ${telefono} (${nombre}) - Expira en 10 min`);
+  setTimeout(() => {
+    if (sesionesClientes.has(telefono)) {
+      sesionesClientes.delete(telefono);
+      console.log(`🗑️ [SESION] Expirada para ${telefono}`);
+    }
+  }, SESION_TTL_MS);
+}
+
+function obtenerSesion(telefono) {
+  const sesion = sesionesClientes.get(telefono);
+  if (!sesion) return null;
+  const tiempoTranscurrido = Date.now() - sesion.timestamp;
+  if (tiempoTranscurrido > SESION_TTL_MS) {
+    sesionesClientes.delete(telefono);
+    console.log(`⏰ [SESION] Expirada por timeout: ${telefono}`);
+    return null;
+  }
+  sesion.timestamp = Date.now();
+  return sesion;
+}
+
+function cerrarSesion(telefono) {
+  if (sesionesClientes.has(telefono)) {
+    sesionesClientes.delete(telefono);
+    console.log(`🚪 [SESION] Cerrada manualmente: ${telefono}`);
+    return true;
+  }
+  return false;
+}
+
+// ════════════════════════════════════════════════════════
 // SISTEMA DE CACHÉ
 // ════════════════════════════════════════════════════════
 
 const cacheClientes = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
+const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // ════════════════════════════════════════════════════════
 // UTILIDADES
@@ -144,7 +123,6 @@ function getGoogleAuth(scopes) {
 
 async function buscarClientePorCedula(cedula, useCache = true) {
   if (!cedula) return { exito: false, error: 'Cédula vacía' };
-
   if (useCache) {
     const cached = cacheClientes.get(cedula);
     if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
@@ -152,7 +130,6 @@ async function buscarClientePorCedula(cedula, useCache = true) {
       return { exito: true, clientes: cached.data };
     }
   }
-
   try {
     const response = await fetch(`${MIKROWISP_URL}/api/v1/GetClientsDetails`, {
       method: 'POST',
@@ -161,8 +138,6 @@ async function buscarClientePorCedula(cedula, useCache = true) {
     });
     const data = await response.json();
     if (data.estado !== 'exito' || !data.datos?.length) return { exito: false, error: 'Cliente no encontrado' };
-
-    // Retornar TODOS los clientes con esta cédula
     cacheClientes.set(cedula, { data: data.datos, timestamp: Date.now() });
     return { exito: true, clientes: data.datos };
   } catch (err) {
@@ -172,7 +147,7 @@ async function buscarClientePorCedula(cedula, useCache = true) {
 }
 
 // ════════════════════════════════════════════════════════
-// NOTIFICACIÓN A LA CONTADORA VIA EMAIL
+// NOTIFICACIÓN A LA CONTADORA
 // ════════════════════════════════════════════════════════
 
 async function notificarContadora(asunto, mensaje) {
@@ -180,7 +155,6 @@ async function notificarContadora(asunto, mensaje) {
     console.log(`📧 [EMAIL] Enviando a ${CONTADORA_EMAIL}`);
     console.log(`📧 [EMAIL] Asunto: ${asunto}`);
     console.log(`📧 [EMAIL] Mensaje: ${mensaje.substring(0, 100)}...`);
-    
     console.log(`✅ [EMAIL] Email simulado enviado a ${CONTADORA_EMAIL}`);
     return true;
   } catch (err) {
@@ -190,21 +164,15 @@ async function notificarContadora(asunto, mensaje) {
 }
 
 // ════════════════════════════════════════════════════════
-// ACTIVACIÓN/SUSPENSIÓN EN MIKROWISP
+// AKTIVACIÓN/SUSPENSIÓN EN MIKROWISP
 // ════════════════════════════════════════════════════════
 
 async function activarServicioMikroWisp(idcliente) {
   try {
     const response = await fetch(`${MIKROWISP_URL}/api/v1/ActiveService`, {
       method: 'POST',
-      headers: { 
-        'accept': 'application/json',
-        'Content-Type': 'application/json' 
-      },
-      body: JSON.stringify({
-        token: MIKROWISP_TOKEN,
-        idcliente: parseInt(idcliente)
-      })
+      headers: { 'accept': 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: MIKROWISP_TOKEN, idcliente: parseInt(idcliente) })
     });
     const data = await response.json();
     console.log(`🔧 [MIKROWISP] Respuesta activación:`, JSON.stringify(data));
@@ -220,12 +188,7 @@ async function suspenderServicioMikroWisp(idcliente, motivo) {
     const response = await fetch(`${MIKROWISP_URL}/api/v1/SetStatusClient`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token: MIKROWISP_TOKEN,
-        idcliente: idcliente,
-        estado: 'retirado',
-        motivo: motivo
-      })
+      body: JSON.stringify({ token: MIKROWISP_TOKEN, idcliente, estado: 'retirado', motivo })
     });
     const data = await response.json();
     return data.estado === 'exito';
@@ -330,17 +293,14 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.6 (Sesiones 10min)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.7 (Sesiones inteligentes)' }));
 
 app.get('/health', async (req, res) => {
-  const [mikrowisp, mercatelyApi] = await Promise.all([
-    verificarMikroWisp(), verificarMercatelyAPI()
-  ]);
+  const [mikrowisp, mercatelyApi] = await Promise.all([verificarMikroWisp(), verificarMercatelyAPI()]);
   const mercately = verificarMercately();
-
   res.json({
     estado_general: '✅',
-    version: '6.6 (Sesiones 10min)',
+    version: '6.7 (Sesiones inteligentes)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately },
     pagos: {
       pendientes: pagosDB.pendientes.length,
@@ -348,30 +308,24 @@ app.get('/health', async (req, res) => {
       rechazados_total: pagosDB.rechazados.length,
       lista_negra: pagosDB.lista_negra.length
     },
-    sesiones: { 
-      activas: sesionesClientes.size,
-      ttl_minutos: SESION_TTL_MS / 60000
-    },
+    sesiones: { activas: sesionesClientes.size, ttl_minutos: SESION_TTL_MS / 60000 },
     nota: 'DB en RAM - se resetea al reiniciar servidor'
   });
 });
 
 app.get('/status', async (req, res) => {
-  const [mikrowisp, mercatelyApi] = await Promise.all([
-    verificarMikroWisp(), verificarMercatelyAPI()
-  ]);
+  const [mikrowisp, mercatelyApi] = await Promise.all([verificarMikroWisp(), verificarMercatelyAPI()]);
   const mercately = verificarMercately();
-  const railway = { estado: 'ok', mensaje: `v6.6 (Sesiones 10min) · Uptime: ${Math.floor(process.uptime() / 60)} min` };
+  const railway = { estado: 'ok', mensaje: `v6.7 · Uptime: ${Math.floor(process.uptime() / 60)} min` };
   const todos_ok = mikrowisp.estado === 'ok' && mercatelyApi.estado === 'ok';
   const colorEstado = (e) => e === 'ok' ? '#22c55e' : e === 'advertencia' ? '#f59e0b' : e === 'desconocido' ? '#6b7280' : '#ef4444';
   const iconoEstado = (e) => e === 'ok' ? '🟢' : e === 'advertencia' ? '🟡' : e === 'desconocido' ? '⚪' : '🔴';
   const tiempoLocal = new Date().toLocaleString('es-EC', { timeZone: 'America/Guayaquil' });
-
   const html = `<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="refresh" content="30"><title>FibraNet · Estado</title>
 <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f1f5f9;min-height:100vh;padding:20px}.container{max-width:800px;margin:0 auto}.header{text-align:center;margin-bottom:30px;padding:30px 20px;background:rgba(255,255,255,0.05);border-radius:16px}.logo{font-size:32px;font-weight:700;margin-bottom:8px}.logo span{color:#60a5fa}.subtitle{color:#94a3b8;font-size:14px}.estado-general{margin-top:16px;padding:12px 24px;border-radius:999px;display:inline-block;font-weight:600;background:${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${todos_ok ? '#22c55e' : '#ef4444'}}.servicios{display:grid;gap:16px}.servicio{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px}.servicio-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.servicio-nombre{font-size:18px;font-weight:600}.badge{padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600}.metricas{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}.metrica{background:rgba(96,165,250,0.05);border:1px solid rgba(96,165,250,0.2);border-radius:12px;padding:16px;text-align:center}.metrica-numero{font-size:28px;font-weight:700;color:#60a5fa}.metrica-label{font-size:11px;color:#94a3b8;margin-top:4px}.footer{text-align:center;margin-top:30px;color:#64748b;font-size:13px}.footer a{color:#60a5fa;text-decoration:none}.aviso-ram{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:12px;padding:12px;margin-top:16px;text-align:center;color:#fbbf24;font-size:13px}</style>
 </head><body><div class="container">
-<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado · v6.6 - Sesiones 10min</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR'}</div></div>
+<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado · v6.7 - Sesiones inteligentes</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR'}</div></div>
 <div class="servicios">
 <div class="servicio" style="border-left:4px solid ${colorEstado(railway.estado)}"><div class="servicio-header"><div class="servicio-nombre">🚂 Railway</div><span class="badge" style="background:${colorEstado(railway.estado)}20;color:${colorEstado(railway.estado)}">${iconoEstado(railway.estado)} OK</span></div><div style="color:#cbd5e1;font-size:14px;margin-top:8px">${railway.mensaje}</div></div>
 <div class="servicio" style="border-left:4px solid ${colorEstado(mikrowisp.estado)}"><div class="servicio-header"><div class="servicio-nombre">🌐 MikroWisp</div><span class="badge" style="background:${colorEstado(mikrowisp.estado)}20;color:${colorEstado(mikrowisp.estado)}">${iconoEstado(mikrowisp.estado)} ${mikrowisp.estado.toUpperCase()}</span></div><div style="color:#cbd5e1;font-size:14px;margin-top:8px">${mikrowisp.mensaje}</div></div>
@@ -388,32 +342,23 @@ app.get('/status', async (req, res) => {
 <div class="aviso-ram">⚠️ Base de datos en RAM - Los datos se resetean si el servidor reinicia</div>
 <div class="footer"><div>📍 Zamora, Ecuador · ${tiempoLocal}</div><div style="margin-top:8px"><a href="/admin/${ADMIN_TOKEN}">📊 Dashboard Contadora</a> · <a href="/health">Ver JSON</a></div></div>
 </div></body></html>`;
-
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
 
 // ════════════════════════════════════════════════════════
-// 🆕 v6.6: ENDPOINTS DE SESIÓN
+// v6.7: ENDPOINTS DE SESIÓN
 // ════════════════════════════════════════════════════════
 
-// Verificar si tiene sesión activa (Mercately llama PRIMERO a este)
 app.post('/cliente/sesion', async (req, res) => {
   try {
     const { telefono } = req.body;
     console.log(`🔍 [SESION] Verificando: ${telefono}`);
-    
     if (!telefono) {
-      return res.json({
-        tiene_sesion: false,
-        mensaje: "Por favor, ingresa tu número de cédula para continuar."
-      });
+      return res.json({ tiene_sesion: false, mensaje: "Por favor, ingresa tu número de cédula para continuar." });
     }
-    
     const sesion = obtenerSesion(telefono);
-    
     if (sesion) {
-      // Ya tiene sesión activa - NO pedir cédula
       console.log(`✅ [SESION] Activa para ${telefono} (${sesion.nombre})`);
       return res.json({
         tiene_sesion: true,
@@ -423,39 +368,24 @@ app.post('/cliente/sesion', async (req, res) => {
         mensaje: `¡Hola de nuevo ${sesion.nombre}! ¿En qué puedo ayudarte?`
       });
     } else {
-      // NO tiene sesión - pedir cédula
       console.log(`❌ [SESION] No existe para ${telefono}`);
-      return res.json({
-        tiene_sesion: false,
-        mensaje: "Por favor, ingresa tu número de cédula para continuar."
-      });
+      return res.json({ tiene_sesion: false, mensaje: "Por favor, ingresa tu número de cédula para continuar." });
     }
   } catch (error) {
     console.error('❌ [SESION] Error:', error);
-    res.status(500).json({ 
-      tiene_sesion: false,
-      mensaje: '⚠️ Error del sistema.' 
-    });
+    res.status(500).json({ tiene_sesion: false, mensaje: '⚠️ Error del sistema.' });
   }
 });
 
-// Cerrar sesión manualmente (botón "Salir")
 app.post('/cliente/salir', async (req, res) => {
   try {
     const { telefono } = req.body;
     console.log(`🚪 [SALIR] Solicitud de ${telefono}`);
-    
     if (!telefono) {
-      return res.json({
-        sesion_cerrada: false,
-        mensaje: "Error al cerrar sesión."
-      });
+      return res.json({ sesion_cerrada: false, mensaje: "Error al cerrar sesión." });
     }
-    
     const cerrada = cerrarSesion(telefono);
-    
     if (cerrada) {
-      console.log(`✅ [SALIR] Sesión cerrada: ${telefono}`);
       return res.json({
         sesion_cerrada: true,
         mensaje: "👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐\n\nSi necesitas ayuda nuevamente, solo escríbeme."
@@ -468,10 +398,7 @@ app.post('/cliente/salir', async (req, res) => {
     }
   } catch (error) {
     console.error('❌ [SALIR] Error:', error);
-    res.status(500).json({ 
-      sesion_cerrada: false,
-      mensaje: '⚠️ Error del sistema.' 
-    });
+    res.status(500).json({ sesion_cerrada: false, mensaje: '⚠️ Error del sistema.' });
   }
 });
 
@@ -494,17 +421,16 @@ app.post('/cliente/buscar', async (req, res) => {
     }
 
     const clientes = resultado.clientes;
-    
-    // 🆕 Filtrar duplicados por ID único
+
+    // Filtrar duplicados por ID único
     const clientesUnicos = clientes.filter((cliente, index, self) =>
       index === self.findIndex(c => c.id === cliente.id)
     );
-    
+
     console.log(`📊 [BUSCAR] Clientes encontrados: ${clientes.length} | Únicos: ${clientesUnicos.length}`);
-    
+
     const primerCliente = clientesUnicos[0];
-    
-    // Sumar deuda total de TODOS los servicios únicos
+
     let deudaTotal = 0;
     let facturasTotal = 0;
     clientesUnicos.forEach(c => {
@@ -513,22 +439,40 @@ app.post('/cliente/buscar', async (req, res) => {
     });
 
     const nombreCompleto = capitalizarNombre(primerCliente.nombre);
-    
-    // 🆕 GUARDAR SESIÓN (10 minutos)
+
+    // Verificar si ya tiene sesión activa ANTES de guardar
+    let tieneSesionActiva = false;
+    if (telefono) {
+      const sesionExistente = obtenerSesion(telefono);
+      if (sesionExistente) {
+        tieneSesionActiva = true;
+        console.log(`✅ [BUSCAR] Cliente ya tenía sesión activa: ${telefono}`);
+      }
+    }
+
+    // Guardar o actualizar sesión (10 minutos)
     if (telefono) {
       guardarSesion(telefono, cedula, nombreCompleto, clientesUnicos);
     }
 
-    const mensajeBienvenida = `✅ *Identidad verificada*\n\nBienvenido(a) Sr(a). *${nombreCompleto}*\n\n📋 ¿En qué podemos ayudarle hoy?`;
+    // Mensaje dinámico según si tiene sesión o no
+    let mensajeBienvenida;
+    if (tieneSesionActiva) {
+      mensajeBienvenida = `📋 ¿En qué más podemos ayudarle?`;
+      console.log(`🔄 [BUSCAR] Sesión renovada - sin saludo repetido`);
+    } else {
+      mensajeBienvenida = `✅ *Identidad verificada*\n\nBienvenido(a) Sr(a). *${nombreCompleto}*\n\n📋 ¿En qué podemos ayudarle hoy?`;
+      console.log(`🎉 [BUSCAR] Nueva sesión - saludo completo`);
+    }
 
     return res.json({
-      encontrado: true, 
-      id: primerCliente.id, 
+      encontrado: true,
+      id: primerCliente.id,
       nombre: nombreCompleto,
-      cedula: cedula, 
-      deuda: deudaTotal, 
+      cedula: cedula,
+      deuda: deudaTotal,
       facturasPendientes: facturasTotal,
-      plan: clientesUnicos.length > 1 ? `${clientesUnicos.length} servicios` : (clientesUnicos[0].servicios?.[0]?.perfil || 'N/A'), 
+      plan: clientesUnicos.length > 1 ? `${clientesUnicos.length} servicios` : (clientesUnicos[0].servicios?.[0]?.perfil || 'N/A'),
       mensaje: mensajeBienvenida
     });
   } catch (err) {
@@ -540,8 +484,6 @@ app.post('/cliente/buscar', async (req, res) => {
 app.post('/cliente/deuda', async (req, res) => {
   try {
     const { cedula, telefono } = req.body;
-    
-    // Intentar obtener de sesión primero
     let resultado;
     if (telefono) {
       const sesion = obtenerSesion(telefono);
@@ -550,21 +492,10 @@ app.post('/cliente/deuda', async (req, res) => {
         console.log(`💾 [DEUDA] Usando sesión de ${telefono}`);
       }
     }
-    
-    // Si no hay sesión, buscar por cédula
-    if (!resultado && cedula) {
-      resultado = await buscarClientePorCedula(cedula);
-    }
-    
-    if (!resultado || !resultado.exito) {
-      return res.json({ mensaje: '❌ No se encontró información del cliente.' });
-    }
+    if (!resultado && cedula) resultado = await buscarClientePorCedula(cedula);
+    if (!resultado || !resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
     const clientes = resultado.clientes;
-    const primerCliente = clientes[0];
-    const nombreCompleto = capitalizarNombre(primerCliente.nombre);
-    
-    // Calcular deuda total
     let deudaTotal = 0;
     let facturasTotal = 0;
     clientes.forEach(c => {
@@ -573,28 +504,23 @@ app.post('/cliente/deuda', async (req, res) => {
     });
 
     if (facturasTotal === 0) {
-      return res.json({ 
-        deuda: 0, 
-        mensaje: `✅ *Estimado(a) cliente*, no tiene deudas pendientes.\n\n¡Gracias por mantener su pago al día! 🎉` 
-      });
+      return res.json({ deuda: 0, mensaje: `✅ *Estimado(a) cliente*, no tiene deudas pendientes.\n\n¡Gracias por mantener su pago al día! 🎉` });
     }
 
-    // Crear desglose si tiene múltiples servicios
     let desglose = '';
     if (clientes.length > 1) {
       desglose = '\n\n📋 *Desglose por servicio:*\n';
       clientes.forEach((c, index) => {
         const deuda = parseFloat(c.facturacion?.total_facturas || 0);
         const facturas = parseInt(c.facturacion?.facturas_nopagadas || 0);
-        const servicioNombre = c.nombre || `Servicio ${index + 1}`;
         if (deuda > 0) {
-          desglose += `\n${index + 1}. ${servicioNombre}\n   💵 $${deuda.toFixed(2)} (${facturas} factura${facturas > 1 ? 's' : ''})`;
+          desglose += `\n${index + 1}. ${c.nombre}\n   💵 $${deuda.toFixed(2)} (${facturas} factura${facturas > 1 ? 's' : ''})`;
         }
       });
     }
 
     return res.json({
-      deuda: deudaTotal, 
+      deuda: deudaTotal,
       facturas: facturasTotal,
       mensaje: `💰 *Estado de cuenta*\n\n💵 Total a pagar: *$${deudaTotal.toFixed(2)}*\n📋 Facturas pendientes: *${facturasTotal}*${desglose}\n\nPara pagar seleccione *"📸 Pagar mi servicio"* en el menú.`
     });
@@ -607,26 +533,15 @@ app.post('/cliente/deuda', async (req, res) => {
 app.post('/pago/info', async (req, res) => {
   try {
     const { cedula, telefono } = req.body;
-    
-    // Intentar obtener de sesión primero
     let resultado;
     if (telefono) {
       const sesion = obtenerSesion(telefono);
-      if (sesion) {
-        resultado = { exito: true, clientes: sesion.clientes };
-      }
+      if (sesion) resultado = { exito: true, clientes: sesion.clientes };
     }
-    
-    if (!resultado && cedula) {
-      resultado = await buscarClientePorCedula(cedula);
-    }
-    
-    if (!resultado || !resultado.exito) {
-      return res.json({ mensaje: '❌ No se encontró información del cliente.' });
-    }
+    if (!resultado && cedula) resultado = await buscarClientePorCedula(cedula);
+    if (!resultado || !resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
     const clientes = resultado.clientes;
-    
     let deudaTotal = 0;
     let facturasTotal = 0;
     clientes.forEach(c => {
@@ -636,7 +551,10 @@ app.post('/pago/info', async (req, res) => {
 
     if (facturasTotal === 0) return res.json({ deuda: 0, mensaje: `✅ No tiene deudas pendientes. ¡Está al día! 🎉` });
 
-    res.json({ deuda: deudaTotal, mensaje: `${CUENTAS_BANCARIAS}\n\n💵 *Su deuda total: $${deudaTotal.toFixed(2)}*\n\n📸 Realice su transferencia y envíenos la *foto del comprobante* aquí mismo para activar su${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's' : ''}.` });
+    res.json({
+      deuda: deudaTotal,
+      mensaje: `${CUENTAS_BANCARIAS}\n\n💵 *Su deuda total: $${deudaTotal.toFixed(2)}*\n\n📸 Realice su transferencia y envíenos la *foto del comprobante* aquí mismo para activar su${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's' : ''}.`
+    });
   } catch (err) {
     console.error('❌ [PAGO-INFO] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
@@ -644,14 +562,14 @@ app.post('/pago/info', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.6: PROCESAR COMPROBANTE CON PROMESA DE PAGO
+// v6.7: PROCESAR COMPROBANTE CON PROMESA DE PAGO
 // ════════════════════════════════════════════════════════
+
 app.post('/pago/comprobante', async (req, res) => {
   try {
     const { cedula, telefono, nombre_contacto } = req.body;
-    console.log(`📸 [COMPROBANTE v6.6] Cédula: "${cedula}" | Tel: ${telefono}`);
+    console.log(`📸 [COMPROBANTE v6.7] Cédula: "${cedula}" | Tel: ${telefono}`);
 
-    // Intentar obtener de sesión primero
     let resultadoCliente;
     if (telefono) {
       const sesion = obtenerSesion(telefono);
@@ -660,11 +578,7 @@ app.post('/pago/comprobante', async (req, res) => {
         console.log(`💾 [COMPROBANTE] Usando sesión de ${telefono}`);
       }
     }
-    
-    if (!resultadoCliente && cedula) {
-      resultadoCliente = await buscarClientePorCedula(cedula);
-    }
-    
+    if (!resultadoCliente && cedula) resultadoCliente = await buscarClientePorCedula(cedula);
     if (!resultadoCliente || !resultadoCliente.exito) {
       return res.json({ activado: false, mensaje: '❌ No se encontró información del cliente.' });
     }
@@ -673,12 +587,9 @@ app.post('/pago/comprobante', async (req, res) => {
     const primerCliente = clientes[0];
     const nombreCompleto = nombre_contacto || capitalizarNombre(primerCliente.nombre);
     const telefonoFinal = telefono || primerCliente.movil || primerCliente.telefono || '';
-    
-    // Calcular deuda total de TODOS los servicios
+
     let deudaTotal = 0;
-    clientes.forEach(cliente => {
-      deudaTotal += parseFloat(cliente.facturacion?.total_facturas || 0);
-    });
+    clientes.forEach(c => { deudaTotal += parseFloat(c.facturacion?.total_facturas || 0); });
 
     console.log(`👤 [COMPROBANTE] ${nombreCompleto} | Clientes: ${clientes.length} | Deuda: $${deudaTotal.toFixed(2)}`);
 
@@ -687,41 +598,27 @@ app.post('/pago/comprobante', async (req, res) => {
     }
 
     if (await estaEnListaNegra(cedula || primerCliente.cedula)) {
-      console.log(`🚫 [COMPROBANTE] Cliente en lista negra`);
-      return res.json({
-        activado: false,
-        mensaje: `⚠️ Por seguridad, su pago será verificado manualmente.\n\nUn asesor le contactará. 📞`
-      });
+      return res.json({ activado: false, mensaje: `⚠️ Por seguridad, su pago será verificado manualmente.\n\nUn asesor le contactará. 📞` });
     }
 
     if (await tienePagoPendiente(cedula || primerCliente.cedula)) {
-      console.log(`⚠️ [COMPROBANTE] Ya tiene pago pendiente`);
       return res.json({
         activado: true,
         mensaje: `✅ *${nombreCompleto}*, ya tenemos su comprobante registrado.\n\nSu${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's están' : ' está'} activo${clientes.length > 1 ? 's' : ''} y ${clientes.length > 1 ? 'serán verificados' : 'será verificado'} en breve.`
       });
     }
 
-    // Activar TODOS los CLIENTES (cada cliente es un servicio en MikroWisp)
     let serviciosActivados = 0;
     for (const cliente of clientes) {
       const activado = await activarServicioMikroWisp(cliente.id);
       if (activado) {
         serviciosActivados++;
-        const servicioNombre = cliente.servicios?.[0]?.perfil || 'Servicio';
-        console.log(`✅ [COMPROBANTE] Cliente activado: ${cliente.nombre} - ${servicioNombre} (ID: ${cliente.id})`);
+        console.log(`✅ [COMPROBANTE] Activado: ${cliente.nombre} (ID: ${cliente.id})`);
       } else {
         console.log(`⚠️ [COMPROBANTE] No se pudo activar: ${cliente.nombre} (ID: ${cliente.id})`);
       }
     }
 
-    if (serviciosActivados > 0) {
-      console.log(`⚡ [COMPROBANTE] Total activados: ${serviciosActivados}/${clientes.length} servicios`);
-    } else {
-      console.log(`⚠️ [COMPROBANTE] MikroWisp falló, pero continuamos. Contadora activará manualmente`);
-    }
-
-    // Preparar lista de servicios para guardar
     const listaServicios = clientes.map(c => ({
       id: c.id,
       nombre: c.nombre,
@@ -729,7 +626,6 @@ app.post('/pago/comprobante', async (req, res) => {
       activado: true
     }));
 
-    // Guardar en RAM
     const ahora = new Date();
     const fechaLimite = new Date(ahora.getTime() + DIAS_PROMESA * 24 * 60 * 60 * 1000);
 
@@ -750,9 +646,7 @@ app.post('/pago/comprobante', async (req, res) => {
     await agregarPagoPendiente(pago);
     console.log(`💾 [COMPROBANTE] Pago guardado en RAM`);
 
-    // Notificar a la contadora por email
-    const asunto = '🔔 NUEVO PAGO PENDIENTE - FibraNet';
-    const mensajeContadora = `
+    await notificarContadora('🔔 NUEVO PAGO PENDIENTE - FibraNet', `
 NUEVO PAGO PENDIENTE DE VERIFICACIÓN
 
 Cliente: ${nombreCompleto}
@@ -762,20 +656,14 @@ Deuda total: $${deudaTotal.toFixed(2)}
 Servicios activados: ${serviciosActivados}/${clientes.length}
 ${listaServicios.map(s => `  - ${s.nombre} (${s.plan})`).join('\n')}
 Fecha: ${ahora.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}
-
-Plazo de verificación: ${DIAS_PROMESA} días
 Vence: ${fechaLimite.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}
-
 Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TOKEN}
-`;
-
-    await notificarContadora(asunto, mensajeContadora);
+`);
 
     return res.json({
       activado: true,
       mensaje: `✅ *¡Pago recibido!*\n\nHemos recibido su comprobante.\nSu${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's se están activando' : ' se está activando'}.\n\n📡 Estimado(a) Sr(a). *${nombreCompleto}*\nDisfrute de su internet 🌐\n\n¡Gracias por confiar en FibraNet!`
     });
-
   } catch (err) {
     console.error('❌ [COMPROBANTE] Error:', err);
     res.status(500).json({ activado: false, mensaje: '⚠️ Error procesando el pago.' });
@@ -785,52 +673,32 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
 app.post('/cliente/plan', async (req, res) => {
   try {
     const { cedula, telefono } = req.body;
-    
-    // Intentar obtener de sesión primero
     let resultado;
     if (telefono) {
       const sesion = obtenerSesion(telefono);
-      if (sesion) {
-        resultado = { exito: true, clientes: sesion.clientes };
-      }
+      if (sesion) resultado = { exito: true, clientes: sesion.clientes };
     }
-    
-    if (!resultado && cedula) {
-      resultado = await buscarClientePorCedula(cedula);
-    }
-    
-    if (!resultado || !resultado.exito) {
-      return res.json({ mensaje: '❌ No se encontró información del cliente.' });
-    }
+    if (!resultado && cedula) resultado = await buscarClientePorCedula(cedula);
+    if (!resultado || !resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
     const clientes = resultado.clientes;
-    const primerCliente = clientes[0];
-    const nombreCompleto = capitalizarNombre(primerCliente.nombre);
 
     if (clientes.length === 1 && clientes[0].servicios?.length === 1) {
-      // Un solo servicio - mostrar detalle
       const servicio = clientes[0].servicios[0];
       const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
       return res.json({
         mensaje: `📡 *Información de su servicio*\n\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}\n${estadoIcon} Conexión: *${servicio.status_user}*\n📅 Cliente desde: ${servicio.instalado}`
       });
     } else {
-      // Múltiples servicios - mostrar lista
       let mensaje = `📡 *Sus servicios contratados*\n`;
       let servicioNum = 1;
-      
       clientes.forEach(cliente => {
-        const servicios = cliente.servicios || [];
-        servicios.forEach(servicio => {
+        (cliente.servicios || []).forEach(servicio => {
           const estadoIcon = servicio.status_user === 'ONLINE' ? '🟢' : '🔴';
-          mensaje += `\n${servicioNum}. *${cliente.nombre}*\n`;
-          mensaje += `   📋 ${servicio.perfil}\n`;
-          mensaje += `   💰 $${servicio.costo}/mes\n`;
-          mensaje += `   ${estadoIcon} ${servicio.status_user}\n`;
+          mensaje += `\n${servicioNum}. *${cliente.nombre}*\n   📋 ${servicio.perfil}\n   💰 $${servicio.costo}/mes\n   ${estadoIcon} ${servicio.status_user}\n`;
           servicioNum++;
         });
       });
-      
       return res.json({ mensaje });
     }
   } catch (err) {
@@ -852,9 +720,7 @@ app.post('/soporte/reporte', async (req, res) => {
     let nombreCliente = 'Cliente';
     if (cedula) {
       const r = await buscarClientePorCedula(cedula);
-      if (r.exito && r.clientes?.length > 0) {
-        nombreCliente = capitalizarNombre(r.clientes[0].nombre);
-      }
+      if (r.exito && r.clientes?.length > 0) nombreCliente = capitalizarNombre(r.clientes[0].nombre);
     }
     res.json({ ticket, mensaje: `🔧 *Reporte registrado*\n\n📋 #${ticket}\n👤 ${nombreCliente}\n⚠️ ${problemas[problema] || descripcion}\n\n✅ Equipo técnico notificado.` });
   } catch (err) {
@@ -866,55 +732,40 @@ app.post('/soporte/reporte', async (req, res) => {
 app.post('/soporte/cambio-clave', async (req, res) => {
   try {
     const { cedula, nueva_clave } = req.body;
-    
-    // Validación: mínimo 8 caracteres
     if (!nueva_clave || nueva_clave.length < 8) {
       return res.json({
         error: true,
         mensaje: `⚠️ *Contraseña muy corta*\n\nDebe tener *mínimo 8 caracteres*.\n\n📝 Recomendaciones:\n• Mínimo 8 caracteres\n• Combina letras y números\n• Sin espacios\n\n🔄 Por favor, envía tu nueva contraseña.`
       });
     }
-    
     const ticket = `CLV-${Date.now().toString().slice(-6)}`;
     let nombreCliente = 'Cliente';
     if (cedula) {
       const r = await buscarClientePorCedula(cedula);
-      if (r.exito && r.clientes?.length > 0) {
-        nombreCliente = capitalizarNombre(r.clientes[0].nombre);
-      }
+      if (r.exito && r.clientes?.length > 0) nombreCliente = capitalizarNombre(r.clientes[0].nombre);
     }
-    res.json({ 
-      ticket, 
-      error: false,
-      mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` 
-    });
+    res.json({ ticket, error: false, mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` });
   } catch (err) {
     console.error('❌ [CAMBIO-CLAVE] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
 
-app.get('/nuevo-cliente', (req, res) => {
-  res.json({ mensaje: `🌟 *¡Gracias por su interés!*\n\nUn asesor le contactará. 🌐` });
-});
-
+app.get('/nuevo-cliente', (req, res) => res.json({ mensaje: `🌟 *¡Gracias por su interés!*\n\nUn asesor le contactará. 🌐` }));
 app.get('/despedida', (req, res) => res.json({ mensaje: `👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐` }));
-
 app.post('/despedida', (req, res) => {
+  const { telefono } = req.body;
+  if (telefono) cerrarSesion(telefono);
   res.json({ mensaje: `👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐` });
 });
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.6: DASHBOARD DE ADMINISTRACIÓN
+// v6.7: DASHBOARD DE ADMINISTRACIÓN
 // ════════════════════════════════════════════════════════
 
 app.get('/admin/:token', async (req, res) => {
-  if (req.params.token !== ADMIN_TOKEN) {
-    return res.status(403).send('<h1>Acceso denegado</h1>');
-  }
-
+  if (req.params.token !== ADMIN_TOKEN) return res.status(403).send('<h1>Acceso denegado</h1>');
   const ahora = new Date();
-
   const html = `<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Admin · FibraNet</title>
 <style>
@@ -923,7 +774,7 @@ body{font-family:-apple-system,sans-serif;background:#f1f5f9;color:#0f172a;min-h
 .container{max-width:1200px;margin:0 auto}
 h1{font-size:28px;margin-bottom:24px;color:#0f172a}
 h1 span{color:#3b82f6}
-h2{margin-top:32px;margin-bottom:16px;color:#0f172a;font-size:20px;display:flex;align-items:center;gap:8px}
+h2{margin-top:32px;margin-bottom:16px;color:#0f172a;font-size:20px}
 .metricas{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
 .metrica{background:#fff;border-radius:12px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
 .metrica-numero{font-size:32px;font-weight:700}
@@ -948,15 +799,12 @@ h2{margin-top:32px;margin-bottom:16px;color:#0f172a;font-size:20px;display:flex;
 .btn-verificar:hover{background:#16a34a}
 .btn-rechazar{background:#ef4444;color:#fff}
 .btn-rechazar:hover{background:#dc2626}
-.btn-mercately{background:#3b82f6;color:#fff}
-.btn-mercately:hover{background:#2563eb}
 .vacio{background:#fff;border-radius:12px;padding:40px;text-align:center;color:#64748b}
 .urgencia{display:inline-block;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-left:8px}
 .urgencia.alta{background:#fee2e2;color:#dc2626}
 .urgencia.media{background:#fef3c7;color:#d97706}
 .urgencia.baja{background:#dbeafe;color:#2563eb}
 .aviso-ram{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:12px;padding:12px;margin-bottom:20px;text-align:center;color:#d97706;font-size:13px;font-weight:600}
-.seccion-historico{margin-top:24px}
 .toggle-historico{cursor:pointer;user-select:none;padding:12px;background:#fff;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
 .toggle-historico:hover{background:#f8fafc}
 .historico-contenido{display:none}
@@ -965,16 +813,13 @@ h2{margin-top:32px;margin-bottom:16px;color:#0f172a;font-size:20px;display:flex;
 </head><body><div class="container">
 <h1>📊 <span>FibraNet</span> · Panel de Verificación</h1>
 <div class="aviso-ram">⚠️ Base de datos en RAM - Los datos se resetean si el servidor reinicia | 🕐 Sesiones activas: ${sesionesClientes.size}</div>
-
 <div class="metricas">
 <div class="metrica"><div class="metrica-numero metrica-pendiente">${pagosDB.pendientes.length}</div><div class="metrica-label">⏰ Pendientes</div></div>
 <div class="metrica"><div class="metrica-numero metrica-verificado">${pagosDB.verificados.length}</div><div class="metrica-label">✅ Verificados</div></div>
 <div class="metrica"><div class="metrica-numero metrica-rechazado">${pagosDB.rechazados.length}</div><div class="metrica-label">❌ Rechazados</div></div>
 <div class="metrica"><div class="metrica-numero metrica-negra">${pagosDB.lista_negra.length}</div><div class="metrica-label">🚫 Lista Negra</div></div>
 </div>
-
 <h2>⏰ Pagos pendientes de verificación</h2>
-
 ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendientes</div>' : pagosDB.pendientes.map(p => {
   const fechaRecibido = new Date(p.fecha_recibido);
   const fechaLimite = new Date(p.fecha_limite);
@@ -985,9 +830,6 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
   if (diasRestantes <= 0) { urgenciaClass = 'alta'; urgenciaTexto = 'VENCIDO'; }
   else if (diasRestantes <= 2) { urgenciaClass = 'alta'; urgenciaTexto = `⚠️ ${diasRestantes}d`; }
   else if (diasRestantes <= 5) { urgenciaClass = 'media'; urgenciaTexto = `${diasRestantes} días`; }
-  
-  const telefonoDisplay = p.telefono || 'N/A';
-
   return `<div class="tarjeta ${esUrgente ? 'urgente' : ''}">
 <div class="tarjeta-header">
 <div><div class="tarjeta-titulo">${p.nombre} <span class="urgencia ${urgenciaClass}">${urgenciaTexto}</span></div>
@@ -995,7 +837,7 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
 </div>
 <div class="tarjeta-info">
 <div class="info-item"><div class="info-label">🆔 Cédula</div><div class="info-valor">${p.cedula}</div></div>
-<div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${telefonoDisplay}</div></div>
+<div class="info-item"><div class="info-label">📞 Teléfono WhatsApp</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
 <div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
 <div class="info-item"><div class="info-label">📋 Servicios</div><div class="info-valor">${p.servicios ? p.servicios.map(s => s.nombre).join(', ') : p.plan}</div></div>
 </div>
@@ -1005,10 +847,8 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
 </div>
 </div>`;
 }).join('')}
-
-<div class="seccion-historico">
+<div style="margin-top:24px">
 <h2>📜 Historial</h2>
-
 <div class="toggle-historico" onclick="toggleHistorico('verificados')">
 <span>✅ Pagos verificados (${pagosDB.verificados.length})</span>
 <span id="icon-verificados">▼</span>
@@ -1017,112 +857,85 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
 ${pagosDB.verificados.length === 0 ? '<div class="vacio">No hay registros</div>' : pagosDB.verificados.slice().reverse().map(p => {
   const fechaRecibido = new Date(p.fecha_recibido);
   const fechaVerificado = new Date(p.fecha_verificado);
-  
   return `<div class="tarjeta verificada">
-<div class="tarjeta-header">
-<div><div class="tarjeta-titulo">${p.nombre}</div>
-<div style="font-size:12px;color:#64748b">📅 Recibido: ${fechaRecibido.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>
-<div style="font-size:12px;color:#16a34a">✅ Verificado: ${fechaVerificado.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div></div>
-</div>
+<div class="tarjeta-titulo">${p.nombre}</div>
+<div style="font-size:12px;color:#64748b;margin:4px 0">📅 Recibido: ${fechaRecibido.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>
+<div style="font-size:12px;color:#16a34a;margin-bottom:12px">✅ Verificado: ${fechaVerificado.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>
 <div class="tarjeta-info">
 <div class="info-item"><div class="info-label">🆔 Cédula</div><div class="info-valor">${p.cedula}</div></div>
 <div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
 <div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
 <div class="info-item"><div class="info-label">📋 Plan</div><div class="info-valor">${p.plan}</div></div>
-</div>
-</div>`;
+</div></div>`;
 }).join('')}
 </div>
-
-<div class="toggle-historico" onclick="toggleHistorico('rechazados')">
+<div class="toggle-historico" onclick="toggleHistorico('rechazados')" style="margin-top:12px">
 <span>❌ Pagos rechazados (${pagosDB.rechazados.length})</span>
 <span id="icon-rechazados">▼</span>
 </div>
 <div id="historico-rechazados" class="historico-contenido">
 ${pagosDB.rechazados.length === 0 ? '<div class="vacio">No hay registros</div>' : pagosDB.rechazados.slice().reverse().map(p => {
   const fechaRecibido = new Date(p.fecha_recibido);
-  const fechaRechazado = new Date(p.fecha_rechazado);
-  
+  const fechaRechazado = new Date(p.fecha_rechazado || p.fecha_auto_cortado);
   return `<div class="tarjeta rechazada">
-<div class="tarjeta-header">
-<div><div class="tarjeta-titulo">${p.nombre}</div>
-<div style="font-size:12px;color:#64748b">📅 Recibido: ${fechaRecibido.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>
-<div style="font-size:12px;color:#dc2626">❌ Rechazado: ${fechaRechazado.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div></div>
-</div>
+<div class="tarjeta-titulo">${p.nombre}</div>
+<div style="font-size:12px;color:#64748b;margin:4px 0">📅 Recibido: ${fechaRecibido.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>
+<div style="font-size:12px;color:#dc2626;margin-bottom:12px">❌ ${p.estado === 'AUTO_CORTADO' ? 'Auto-cortado' : 'Rechazado'}: ${fechaRechazado?.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' }) || 'N/A'}</div>
 <div class="tarjeta-info">
 <div class="info-item"><div class="info-label">🆔 Cédula</div><div class="info-valor">${p.cedula}</div></div>
 <div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
 <div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
 <div class="info-item"><div class="info-label">📋 Plan</div><div class="info-valor">${p.plan}</div></div>
-</div>
-</div>`;
+</div></div>`;
 }).join('')}
 </div>
-
 </div>
-
 </div>
-
 <script>
 function toggleHistorico(tipo) {
   const contenido = document.getElementById('historico-' + tipo);
   const icono = document.getElementById('icon-' + tipo);
-  if (contenido.classList.contains('activo')) {
-    contenido.classList.remove('activo');
-    icono.textContent = '▼';
-  } else {
-    contenido.classList.add('activo');
-    icono.textContent = '▲';
-  }
+  contenido.classList.toggle('activo');
+  icono.textContent = contenido.classList.contains('activo') ? '▲' : '▼';
 }
-
 async function verificar(cedula) {
   if (!confirm('¿Confirmar pago verificado?')) return;
   const res = await fetch('/admin/${ADMIN_TOKEN}/verificar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cedula })
   });
   const data = await res.json();
   alert(data.exito ? '✅ Verificado' : '❌ Error: ' + data.error);
   if (data.exito) location.reload();
 }
-
 async function rechazar(cedula) {
   if (!confirm('⚠️ ¿RECHAZAR?\\n\\nEsto cortará el servicio y agregará a lista negra.')) return;
   const res = await fetch('/admin/${ADMIN_TOKEN}/rechazar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cedula })
   });
   const data = await res.json();
   alert(data.exito ? '❌ Rechazado' : '❌ Error: ' + data.error);
   if (data.exito) location.reload();
 }
-
 setTimeout(() => location.reload(), 30000);
 </script>
 </body></html>`;
-
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
 
 app.post('/admin/:token/verificar', async (req, res) => {
   if (req.params.token !== ADMIN_TOKEN) return res.status(403).json({ error: 'Acceso denegado' });
-
   try {
     const { cedula } = req.body;
     const indice = pagosDB.pendientes.findIndex(p => p.cedula === cedula);
     if (indice === -1) return res.json({ exito: false, error: 'No encontrado' });
-
     const pago = pagosDB.pendientes[indice];
     pago.estado = 'VERIFICADO';
     pago.fecha_verificado = new Date().toISOString();
-
     pagosDB.pendientes.splice(indice, 1);
     pagosDB.verificados.push(pago);
-
     if (pago.telefono) {
       try {
         await fetch(`${MERCATELY_API_URL}/whatsapp_messages`, {
@@ -1135,7 +948,6 @@ app.post('/admin/:token/verificar', async (req, res) => {
         });
       } catch (e) { console.error('Error notificar:', e.message); }
     }
-
     console.log(`✅ [ADMIN] Verificado: ${cedula}`);
     res.json({ exito: true });
   } catch (err) {
@@ -1146,24 +958,23 @@ app.post('/admin/:token/verificar', async (req, res) => {
 
 app.post('/admin/:token/rechazar', async (req, res) => {
   if (req.params.token !== ADMIN_TOKEN) return res.status(403).json({ error: 'Acceso denegado' });
-
   try {
     const { cedula } = req.body;
     const indice = pagosDB.pendientes.findIndex(p => p.cedula === cedula);
     if (indice === -1) return res.json({ exito: false, error: 'No encontrado' });
-
     const pago = pagosDB.pendientes[indice];
     pago.estado = 'RECHAZADO';
     pago.fecha_rechazado = new Date().toISOString();
-
-    await suspenderServicioMikroWisp(pago.idcliente, 'Pago rechazado');
-
+    if (pago.servicios && pago.servicios.length > 0) {
+      for (const servicio of pago.servicios) {
+        await suspenderServicioMikroWisp(servicio.id, 'Pago rechazado');
+      }
+    } else {
+      await suspenderServicioMikroWisp(pago.idcliente, 'Pago rechazado');
+    }
     pagosDB.pendientes.splice(indice, 1);
     pagosDB.rechazados.push(pago);
-    if (!pagosDB.lista_negra.includes(cedula)) {
-      pagosDB.lista_negra.push(cedula);
-    }
-
+    if (!pagosDB.lista_negra.includes(cedula)) pagosDB.lista_negra.push(cedula);
     if (pago.telefono) {
       try {
         await fetch(`${MERCATELY_API_URL}/whatsapp_messages`, {
@@ -1176,7 +987,6 @@ app.post('/admin/:token/rechazar', async (req, res) => {
         });
       } catch (e) { console.error('Error notificar:', e.message); }
     }
-
     console.log(`❌ [ADMIN] Rechazado: ${cedula}`);
     res.json({ exito: true });
   } catch (err) {
@@ -1186,7 +996,7 @@ app.post('/admin/:token/rechazar', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.6: VERIFICACIÓN DE VENCIMIENTOS
+// v6.7: VERIFICACIÓN DE VENCIMIENTOS (CRON)
 // ════════════════════════════════════════════════════════
 
 async function verificarVencimientos() {
@@ -1194,46 +1004,31 @@ async function verificarVencimientos() {
     console.log(`⏰ [CRON] Verificando vencimientos...`);
     const ahora = new Date();
     const pendientesActualizados = [];
-
     for (const pago of pagosDB.pendientes) {
       const fechaLimite = new Date(pago.fecha_limite);
       const diasRestantes = Math.floor((fechaLimite - ahora) / (24 * 60 * 60 * 1000));
-
       if (diasRestantes <= (DIAS_PROMESA - DIAS_AVISO_RECORDATORIO) && !pago.aviso_recordatorio_enviado) {
-        const asunto = '⚠️ RECORDATORIO - Verificación pendiente - FibraNet';
-        const mensaje = `
+        await notificarContadora('⚠️ RECORDATORIO - Verificación pendiente - FibraNet', `
 RECORDATORIO - Verificación pendiente
-
-Cliente: ${pago.nombre}
-Cédula: ${pago.cedula}
-Recibido hace: ${DIAS_AVISO_RECORDATORIO} días
-
+Cliente: ${pago.nombre} | Cédula: ${pago.cedula}
 Quedan ${diasRestantes} días para verificar
-
 Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TOKEN}
-`;
-        await notificarContadora(asunto, mensaje);
+`);
         pago.aviso_recordatorio_enviado = true;
         console.log(`📨 [CRON] Recordatorio: ${pago.cedula}`);
       }
-
       if (diasRestantes <= 0) {
         console.log(`🔴 [CRON] Auto-corte: ${pago.cedula}`);
-        
-        // Suspender TODOS los servicios del cliente
         if (pago.servicios && pago.servicios.length > 0) {
           for (const servicio of pago.servicios) {
             await suspenderServicioMikroWisp(servicio.id, 'Auto-corte falta verificación');
-            console.log(`🔴 [CRON] Servicio cortado: ${servicio.nombre} (ID: ${servicio.id})`);
           }
         } else {
           await suspenderServicioMikroWisp(pago.idcliente, 'Auto-corte falta verificación');
         }
-        
         pago.estado = 'AUTO_CORTADO';
         pago.fecha_auto_cortado = ahora.toISOString();
         pagosDB.rechazados.push(pago);
-
         if (pago.telefono) {
           try {
             await fetch(`${MERCATELY_API_URL}/whatsapp_messages`, {
@@ -1246,22 +1041,11 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
             });
           } catch (e) { console.error('Error notificar:', e.message); }
         }
-
-        await notificarContadora('🔴 AUTO-CORTE - FibraNet', `
-AUTO-CORTE POR FALTA DE VERIFICACIÓN
-
-Cliente: ${pago.nombre}
-Cédula: ${pago.cedula}
-Servicios cortados: ${pago.servicios?.length || 1}
-
-Servicio suspendido automáticamente.
-`);
+        await notificarContadora('🔴 AUTO-CORTE - FibraNet', `AUTO-CORTE\nCliente: ${pago.nombre} | Cédula: ${pago.cedula}`);
         continue;
       }
-
       pendientesActualizados.push(pago);
     }
-
     pagosDB.pendientes = pendientesActualizados;
     console.log(`⏰ [CRON] Verificación completada`);
   } catch (err) {
@@ -1278,7 +1062,7 @@ setTimeout(verificarVencimientos, 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 FibraNet Webhook v6.6 (Sesiones 10min) en puerto ${PORT}`);
+  console.log(`🚀 FibraNet Webhook v6.7 (Sesiones inteligentes) en puerto ${PORT}`);
   console.log(`📊 Sistema: Promesa de Pago ${DIAS_PROMESA} días`);
   console.log(`💾 Base de datos en RAM - se resetea al reiniciar`);
   console.log(`🕐 Sesiones: ${SESION_TTL_MS / 60000} minutos de duración`);
