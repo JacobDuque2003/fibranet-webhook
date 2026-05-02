@@ -462,9 +462,9 @@ app.post('/pago/comprobante', async (req, res) => {
     const nombreCompleto = capitalizarNombre(cliente.nombre);
     const deuda = parseFloat(cliente.facturacion?.total_facturas || 0);
     const telefono = cliente.movil || cliente.telefono || '';
-    const servicio = cliente.servicios?.[0];
+    const servicios = cliente.servicios || [];
 
-    console.log(`👤 [COMPROBANTE] ${nombreCompleto} | Deuda: $${deuda.toFixed(2)}`);
+    console.log(`👤 [COMPROBANTE] ${nombreCompleto} | Servicios: ${servicios.length} | Deuda: $${deuda.toFixed(2)}`);
 
     if (deuda === 0) {
       return res.json({ activado: false, mensaje: `✅ Estimado(a) ${nombreCompleto}, no tiene deudas pendientes.\n\n¡Está al día! 🎉` });
@@ -486,10 +486,20 @@ app.post('/pago/comprobante', async (req, res) => {
       });
     }
 
-    // Intentar activar servicio en MikroWisp (pero continuar si falla)
-    const activado = await activarServicioMikroWisp(idcliente);
-    if (activado) {
-      console.log(`⚡ [COMPROBANTE] Servicio activado en MikroWisp: ${cedula}`);
+    // Activar TODOS los servicios del cliente en MikroWisp
+    let serviciosActivados = 0;
+    for (const servicio of servicios) {
+      const activado = await activarServicioMikroWisp(servicio.idservicio);
+      if (activado) {
+        serviciosActivados++;
+        console.log(`✅ [COMPROBANTE] Servicio activado: ${servicio.nombre || servicio.perfil} (ID: ${servicio.idservicio})`);
+      } else {
+        console.log(`⚠️ [COMPROBANTE] No se pudo activar servicio: ${servicio.nombre || servicio.perfil} (ID: ${servicio.idservicio})`);
+      }
+    }
+
+    if (serviciosActivados > 0) {
+      console.log(`⚡ [COMPROBANTE] Total activados: ${serviciosActivados}/${servicios.length} servicios`);
     } else {
       console.log(`⚠️ [COMPROBANTE] MikroWisp falló, pero continuamos. Contadora activará manualmente: ${cedula}`);
     }
@@ -503,7 +513,13 @@ app.post('/pago/comprobante', async (req, res) => {
       nombre: nombreCompleto,
       idcliente: idcliente,
       telefono: telefono,
-      plan: servicio?.perfil || 'N/A',
+      plan: servicios.length > 1 ? `${servicios.length} servicios` : (servicios[0]?.perfil || 'N/A'),
+      servicios: servicios.map(s => ({
+        id: s.idservicio,
+        nombre: s.nombre || s.perfil,
+        plan: s.perfil,
+        activado: true
+      })),
       deuda: deuda,
       fecha_recibido: ahora.toISOString(),
       fecha_limite: fechaLimite.toISOString(),
@@ -523,7 +539,8 @@ Cliente: ${nombreCompleto}
 Cédula: ${cedula}
 Teléfono: ${telefono}
 Deuda: $${deuda.toFixed(2)}
-Plan: ${servicio?.perfil || 'N/A'}
+Servicios activados: ${serviciosActivados}/${servicios.length}
+${servicios.map(s => `  - ${s.nombre || s.perfil}`).join('\n')}
 Fecha: ${ahora.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}
 
 Plazo de verificación: ${DIAS_PROMESA} días
@@ -635,6 +652,7 @@ body{font-family:-apple-system,sans-serif;background:#f1f5f9;color:#0f172a;min-h
 .container{max-width:1200px;margin:0 auto}
 h1{font-size:28px;margin-bottom:24px;color:#0f172a}
 h1 span{color:#3b82f6}
+h2{margin-top:32px;margin-bottom:16px;color:#0f172a;font-size:20px;display:flex;align-items:center;gap:8px}
 .metricas{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
 .metrica{background:#fff;border-radius:12px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
 .metrica-numero{font-size:32px;font-weight:700}
@@ -645,6 +663,8 @@ h1 span{color:#3b82f6}
 .metrica-label{font-size:12px;color:#64748b;margin-top:4px;text-transform:uppercase;font-weight:600}
 .tarjeta{background:#fff;border-radius:12px;padding:20px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,0.05);border-left:4px solid #f59e0b}
 .tarjeta.urgente{border-left-color:#ef4444;background:#fef2f2}
+.tarjeta.verificada{border-left-color:#22c55e;background:#f0fdf4}
+.tarjeta.rechazada{border-left-color:#ef4444;background:#fef2f2}
 .tarjeta-header{display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;flex-wrap:wrap;gap:8px}
 .tarjeta-titulo{font-size:18px;font-weight:600}
 .tarjeta-info{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px}
@@ -652,20 +672,26 @@ h1 span{color:#3b82f6}
 .info-label{font-size:11px;color:#64748b;text-transform:uppercase;font-weight:600}
 .info-valor{font-size:14px;color:#0f172a;font-weight:500}
 .botones{display:flex;gap:8px;flex-wrap:wrap}
-.btn{padding:10px 20px;border-radius:8px;border:none;cursor:pointer;font-weight:600;font-size:14px}
+.btn{padding:10px 20px;border-radius:8px;border:none;cursor:pointer;font-weight:600;font-size:14px;text-decoration:none;display:inline-block}
 .btn-verificar{background:#22c55e;color:#fff}
 .btn-verificar:hover{background:#16a34a}
 .btn-rechazar{background:#ef4444;color:#fff}
 .btn-rechazar:hover{background:#dc2626}
+.btn-mercately{background:#3b82f6;color:#fff}
+.btn-mercately:hover{background:#2563eb}
 .vacio{background:#fff;border-radius:12px;padding:40px;text-align:center;color:#64748b}
 .urgencia{display:inline-block;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-left:8px}
 .urgencia.alta{background:#fee2e2;color:#dc2626}
 .urgencia.media{background:#fef3c7;color:#d97706}
 .urgencia.baja{background:#dbeafe;color:#2563eb}
 .aviso-ram{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:12px;padding:12px;margin-bottom:20px;text-align:center;color:#d97706;font-size:13px;font-weight:600}
+.seccion-historico{margin-top:24px}
+.toggle-historico{cursor:pointer;user-select:none;padding:12px;background:#fff;border-radius:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.toggle-historico:hover{background:#f8fafc}
+.historico-contenido{display:none}
+.historico-contenido.activo{display:block}
 </style>
-</head><body>
-<div class="container">
+</head><body><div class="container">
 <h1>📊 <span>FibraNet</span> · Panel de Verificación</h1>
 <div class="aviso-ram">⚠️ Base de datos en RAM - Los datos se resetean si el servidor reinicia</div>
 
@@ -676,7 +702,7 @@ h1 span{color:#3b82f6}
 <div class="metrica"><div class="metrica-numero metrica-negra">${pagosDB.lista_negra.length}</div><div class="metrica-label">🚫 Lista Negra</div></div>
 </div>
 
-<h2 style="margin-bottom:16px;color:#0f172a;font-size:20px">⏰ Pagos pendientes de verificación</h2>
+<h2>⏰ Pagos pendientes de verificación</h2>
 
 ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendientes</div>' : pagosDB.pendientes.map(p => {
   const fechaRecibido = new Date(p.fecha_recibido);
@@ -688,6 +714,9 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
   if (diasRestantes <= 0) { urgenciaClass = 'alta'; urgenciaTexto = 'VENCIDO'; }
   else if (diasRestantes <= 2) { urgenciaClass = 'alta'; urgenciaTexto = `⚠️ ${diasRestantes}d`; }
   else if (diasRestantes <= 5) { urgenciaClass = 'media'; urgenciaTexto = `${diasRestantes} días`; }
+  
+  const telefonoLimpio = p.telefono?.replace(/\D/g, '') || '';
+  const mercatelyUrl = `https://app.mercately.com/conversations/${telefonoLimpio}`;
 
   return `<div class="tarjeta ${esUrgente ? 'urgente' : ''}">
 <div class="tarjeta-header">
@@ -698,18 +727,96 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
 <div class="info-item"><div class="info-label">🆔 Cédula</div><div class="info-valor">${p.cedula}</div></div>
 <div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
 <div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
-<div class="info-item"><div class="info-label">📋 Plan</div><div class="info-valor">${p.plan}</div></div>
+<div class="info-item"><div class="info-label">📋 Servicios</div><div class="info-valor">${p.servicios ? p.servicios.map(s => s.nombre).join(', ') : p.plan}</div></div>
 </div>
 <div class="botones">
+<a href="${mercatelyUrl}" target="_blank" class="btn btn-mercately">💬 Ver en Mercately</a>
 <button class="btn btn-verificar" onclick="verificar('${p.cedula}')">✅ Verificar</button>
 <button class="btn btn-rechazar" onclick="rechazar('${p.cedula}')">❌ Rechazar</button>
 </div>
 </div>`;
 }).join('')}
 
+<div class="seccion-historico">
+<h2>📜 Historial</h2>
+
+<div class="toggle-historico" onclick="toggleHistorico('verificados')">
+<span>✅ Pagos verificados (${pagosDB.verificados.length})</span>
+<span id="icon-verificados">▼</span>
+</div>
+<div id="historico-verificados" class="historico-contenido">
+${pagosDB.verificados.length === 0 ? '<div class="vacio">No hay registros</div>' : pagosDB.verificados.slice().reverse().map(p => {
+  const fechaRecibido = new Date(p.fecha_recibido);
+  const fechaVerificado = new Date(p.fecha_verificado);
+  const telefonoLimpio = p.telefono?.replace(/\D/g, '') || '';
+  const mercatelyUrl = `https://app.mercately.com/conversations/${telefonoLimpio}`;
+  
+  return `<div class="tarjeta verificada">
+<div class="tarjeta-header">
+<div><div class="tarjeta-titulo">${p.nombre}</div>
+<div style="font-size:12px;color:#64748b">📅 Recibido: ${fechaRecibido.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>
+<div style="font-size:12px;color:#16a34a">✅ Verificado: ${fechaVerificado.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div></div>
+</div>
+<div class="tarjeta-info">
+<div class="info-item"><div class="info-label">🆔 Cédula</div><div class="info-valor">${p.cedula}</div></div>
+<div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
+<div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
+<div class="info-item"><div class="info-label">📋 Plan</div><div class="info-valor">${p.plan}</div></div>
+</div>
+<div class="botones">
+<a href="${mercatelyUrl}" target="_blank" class="btn btn-mercately">💬 Ver en Mercately</a>
+</div>
+</div>`;
+}).join('')}
+</div>
+
+<div class="toggle-historico" onclick="toggleHistorico('rechazados')">
+<span>❌ Pagos rechazados (${pagosDB.rechazados.length})</span>
+<span id="icon-rechazados">▼</span>
+</div>
+<div id="historico-rechazados" class="historico-contenido">
+${pagosDB.rechazados.length === 0 ? '<div class="vacio">No hay registros</div>' : pagosDB.rechazados.slice().reverse().map(p => {
+  const fechaRecibido = new Date(p.fecha_recibido);
+  const fechaRechazado = new Date(p.fecha_rechazado);
+  const telefonoLimpio = p.telefono?.replace(/\D/g, '') || '';
+  const mercatelyUrl = `https://app.mercately.com/conversations/${telefonoLimpio}`;
+  
+  return `<div class="tarjeta rechazada">
+<div class="tarjeta-header">
+<div><div class="tarjeta-titulo">${p.nombre}</div>
+<div style="font-size:12px;color:#64748b">📅 Recibido: ${fechaRecibido.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div>
+<div style="font-size:12px;color:#dc2626">❌ Rechazado: ${fechaRechazado.toLocaleString('es-EC', { timeZone: 'America/Guayaquil' })}</div></div>
+</div>
+<div class="tarjeta-info">
+<div class="info-item"><div class="info-label">🆔 Cédula</div><div class="info-valor">${p.cedula}</div></div>
+<div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
+<div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
+<div class="info-item"><div class="info-label">📋 Plan</div><div class="info-valor">${p.plan}</div></div>
+</div>
+<div class="botones">
+<a href="${mercatelyUrl}" target="_blank" class="btn btn-mercately">💬 Ver en Mercately</a>
+</div>
+</div>`;
+}).join('')}
+</div>
+
+</div>
+
 </div>
 
 <script>
+function toggleHistorico(tipo) {
+  const contenido = document.getElementById('historico-' + tipo);
+  const icono = document.getElementById('icon-' + tipo);
+  if (contenido.classList.contains('activo')) {
+    contenido.classList.remove('activo');
+    icono.textContent = '▼';
+  } else {
+    contenido.classList.add('activo');
+    icono.textContent = '▲';
+  }
+}
+
 async function verificar(cedula) {
   if (!confirm('¿Confirmar pago verificado?')) return;
   const res = await fetch('/admin/${ADMIN_TOKEN}/verificar', {
