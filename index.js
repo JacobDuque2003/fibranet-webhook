@@ -16,11 +16,14 @@ const DRIVE_FOLDER_ID = '1nPVyL57elvt-164PXoxVWm0QiIZB-6Ir';
 const MERCATELY_API_URL = 'https://app.mercately.com/retailers/api/v1';
 const MERCATELY_API_KEY = process.env.MERCATELY_API_KEY;
 
-// 🎓 v6.1.1: Configuración del sistema de promesa de pago
+// 🎓 v6.5: Configuración del sistema de promesa de pago
 const DIAS_PROMESA = 10;
 const DIAS_AVISO_RECORDATORIO = 8;
 const CONTADORA_EMAIL = 'jiduque@utpl.edu.ec';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'fibranet-admin-2026';
+
+// 🆕 v6.6: Configuración de sesiones
+const SESION_TTL_MS = 10 * 60 * 1000; // 10 minutos
 
 const GOOGLE_CREDENTIALS = {
   client_email: process.env.GOOGLE_CLIENT_EMAIL,
@@ -30,7 +33,7 @@ const GOOGLE_CREDENTIALS = {
 let ultimoPingMercately = null;
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.1.1: BASE DE DATOS EN MEMORIA RAM
+// 🎓 v6.5: BASE DE DATOS EN MEMORIA RAM
 // ════════════════════════════════════════════════════════
 
 let pagosDB = {
@@ -39,6 +42,60 @@ let pagosDB = {
   rechazados: [],
   lista_negra: []
 };
+
+// ════════════════════════════════════════════════════════
+// 🆕 v6.6: SISTEMA DE SESIONES (10 MINUTOS)
+// ════════════════════════════════════════════════════════
+
+const sesionesClientes = new Map();
+
+// Guardar sesión de cliente
+function guardarSesion(telefono, cedula, nombre, clientes) {
+  sesionesClientes.set(telefono, {
+    cedula,
+    nombre,
+    clientes, // Array con todos los servicios
+    timestamp: Date.now()
+  });
+  
+  console.log(`💾 [SESION] Guardada para ${telefono} (${nombre}) - Expira en 10 min`);
+  
+  // Auto-limpiar después de 10 minutos
+  setTimeout(() => {
+    if (sesionesClientes.has(telefono)) {
+      sesionesClientes.delete(telefono);
+      console.log(`🗑️ [SESION] Expirada para ${telefono}`);
+    }
+  }, SESION_TTL_MS);
+}
+
+// Obtener sesión activa
+function obtenerSesion(telefono) {
+  const sesion = sesionesClientes.get(telefono);
+  if (!sesion) return null;
+  
+  // Verificar si expiró (10 min)
+  const tiempoTranscurrido = Date.now() - sesion.timestamp;
+  if (tiempoTranscurrido > SESION_TTL_MS) {
+    sesionesClientes.delete(telefono);
+    console.log(`⏰ [SESION] Expirada por timeout: ${telefono}`);
+    return null;
+  }
+  
+  // Actualizar timestamp (renovar sesión con cada uso)
+  sesion.timestamp = Date.now();
+  return sesion;
+}
+
+// Cerrar sesión manualmente
+function cerrarSesion(telefono) {
+  if (sesionesClientes.has(telefono)) {
+    sesionesClientes.delete(telefono);
+    console.log(`🚪 [SESION] Cerrada manualmente: ${telefono}`);
+    return true;
+  }
+  return false;
+}
 
 // Funciones simplificadas para DB en RAM
 function obtenerPagosDB() {
@@ -71,9 +128,6 @@ async function tienePagoPendiente(cedula) {
 const cacheClientes = new Map();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos
 
-const clientesYaSaludados = new Map();
-const TIEMPO_RESET_AUTOMATICO_MS = 4 * 60 * 60 * 1000;
-
 // ════════════════════════════════════════════════════════
 // UTILIDADES
 // ════════════════════════════════════════════════════════
@@ -82,24 +136,6 @@ function capitalizarNombre(nombre) {
   if (!nombre || typeof nombre !== 'string') return '';
   return nombre.trim().toLowerCase().split(/\s+/).filter(p => p)
     .map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-}
-
-function yaFueSaludado(cedula) {
-  const timestamp = clientesYaSaludados.get(cedula);
-  if (!timestamp) return false;
-  if (Date.now() - timestamp > TIEMPO_RESET_AUTOMATICO_MS) {
-    clientesYaSaludados.delete(cedula);
-    return false;
-  }
-  return true;
-}
-
-function marcarComoSaludado(cedula) {
-  clientesYaSaludados.set(cedula, Date.now());
-}
-
-function reiniciarSaludo(cedula) {
-  clientesYaSaludados.delete(cedula);
 }
 
 function getGoogleAuth(scopes) {
@@ -144,9 +180,6 @@ async function notificarContadora(asunto, mensaje) {
     console.log(`📧 [EMAIL] Enviando a ${CONTADORA_EMAIL}`);
     console.log(`📧 [EMAIL] Asunto: ${asunto}`);
     console.log(`📧 [EMAIL] Mensaje: ${mensaje.substring(0, 100)}...`);
-    
-    // Por ahora solo logueamos - en producción aquí iría SendGrid, Mailgun, etc.
-    // Para Railway puedes usar variables de entorno con SMTP
     
     console.log(`✅ [EMAIL] Email simulado enviado a ${CONTADORA_EMAIL}`);
     return true;
@@ -243,7 +276,7 @@ Cta. Corriente: 2100299699`;
 // ════════════════════════════════════════════════════════
 
 app.use((req, res, next) => {
-  const rutasMercately = ['/cliente/buscar', '/cliente/deuda', '/cliente/plan', '/pago/info', '/pago/comprobante', '/soporte/reporte', '/soporte/cambio-clave', '/despedida'];
+  const rutasMercately = ['/cliente/buscar', '/cliente/sesion', '/cliente/salir', '/cliente/deuda', '/cliente/plan', '/pago/info', '/pago/comprobante', '/soporte/reporte', '/soporte/cambio-clave', '/despedida'];
   if (rutasMercately.some(r => req.path === r)) {
     ultimoPingMercately = new Date();
   }
@@ -297,7 +330,7 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.1.1 (RAM)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.6 (Sesiones 10min)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi] = await Promise.all([
@@ -307,7 +340,7 @@ app.get('/health', async (req, res) => {
 
   res.json({
     estado_general: '✅',
-    version: '6.1.1 (RAM)',
+    version: '6.6 (Sesiones 10min)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately },
     pagos: {
       pendientes: pagosDB.pendientes.length,
@@ -315,7 +348,10 @@ app.get('/health', async (req, res) => {
       rechazados_total: pagosDB.rechazados.length,
       lista_negra: pagosDB.lista_negra.length
     },
-    sesiones: { clientes_saludados: clientesYaSaludados.size },
+    sesiones: { 
+      activas: sesionesClientes.size,
+      ttl_minutos: SESION_TTL_MS / 60000
+    },
     nota: 'DB en RAM - se resetea al reiniciar servidor'
   });
 });
@@ -325,7 +361,7 @@ app.get('/status', async (req, res) => {
     verificarMikroWisp(), verificarMercatelyAPI()
   ]);
   const mercately = verificarMercately();
-  const railway = { estado: 'ok', mensaje: `v6.1.1 (RAM) · Uptime: ${Math.floor(process.uptime() / 60)} min` };
+  const railway = { estado: 'ok', mensaje: `v6.6 (Sesiones 10min) · Uptime: ${Math.floor(process.uptime() / 60)} min` };
   const todos_ok = mikrowisp.estado === 'ok' && mercatelyApi.estado === 'ok';
   const colorEstado = (e) => e === 'ok' ? '#22c55e' : e === 'advertencia' ? '#f59e0b' : e === 'desconocido' ? '#6b7280' : '#ef4444';
   const iconoEstado = (e) => e === 'ok' ? '🟢' : e === 'advertencia' ? '🟡' : e === 'desconocido' ? '⚪' : '🔴';
@@ -333,9 +369,9 @@ app.get('/status', async (req, res) => {
 
   const html = `<!DOCTYPE html>
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta http-equiv="refresh" content="30"><title>FibraNet · Estado</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f1f5f9;min-height:100vh;padding:20px}.container{max-width:800px;margin:0 auto}.header{text-align:center;margin-bottom:30px;padding:30px 20px;background:rgba(255,255,255,0.05);border-radius:16px}.logo{font-size:32px;font-weight:700;margin-bottom:8px}.logo span{color:#60a5fa}.subtitle{color:#94a3b8;font-size:14px}.estado-general{margin-top:16px;padding:12px 24px;border-radius:999px;display:inline-block;font-weight:600;background:${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${todos_ok ? '#22c55e' : '#ef4444'}}.servicios{display:grid;gap:16px}.servicio{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px}.servicio-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.servicio-nombre{font-size:18px;font-weight:600}.badge{padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600}.metricas{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}.metrica{background:rgba(96,165,250,0.05);border:1px solid rgba(96,165,250,0.2);border-radius:12px;padding:16px;text-align:center}.metrica-numero{font-size:28px;font-weight:700;color:#60a5fa}.metrica-label{font-size:11px;color:#94a3b8;margin-top:4px}.footer{text-align:center;margin-top:30px;color:#64748b;font-size:13px}.footer a{color:#60a5fa;text-decoration:none}.aviso-ram{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:12px;padding:12px;margin-top:16px;text-align:center;color:#fbbf24;font-size:13px}</style>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,sans-serif;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);color:#f1f5f9;min-height:100vh;padding:20px}.container{max-width:800px;margin:0 auto}.header{text-align:center;margin-bottom:30px;padding:30px 20px;background:rgba(255,255,255,0.05);border-radius:16px}.logo{font-size:32px;font-weight:700;margin-bottom:8px}.logo span{color:#60a5fa}.subtitle{color:#94a3b8;font-size:14px}.estado-general{margin-top:16px;padding:12px 24px;border-radius:999px;display:inline-block;font-weight:600;background:${todos_ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'};color:${todos_ok ? '#22c55e' : '#ef4444'}}.servicios{display:grid;gap:16px}.servicio{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px}.servicio-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.servicio-nombre{font-size:18px;font-weight:600}.badge{padding:4px 12px;border-radius:999px;font-size:12px;font-weight:600}.metricas{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:16px}.metrica{background:rgba(96,165,250,0.05);border:1px solid rgba(96,165,250,0.2);border-radius:12px;padding:16px;text-align:center}.metrica-numero{font-size:28px;font-weight:700;color:#60a5fa}.metrica-label{font-size:11px;color:#94a3b8;margin-top:4px}.footer{text-align:center;margin-top:30px;color:#64748b;font-size:13px}.footer a{color:#60a5fa;text-decoration:none}.aviso-ram{background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.3);border-radius:12px;padding:12px;margin-top:16px;text-align:center;color:#fbbf24;font-size:13px}</style>
 </head><body><div class="container">
-<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado · v6.1.1 (RAM) - Promesa de Pago</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR'}</div></div>
+<div class="header"><div class="logo">📡 Fibra<span>Net</span></div><div class="subtitle">Panel de Estado · v6.6 - Sesiones 10min</div><div class="estado-general">${todos_ok ? '✅ TODO OPERATIVO' : '⚠️ REVISAR'}</div></div>
 <div class="servicios">
 <div class="servicio" style="border-left:4px solid ${colorEstado(railway.estado)}"><div class="servicio-header"><div class="servicio-nombre">🚂 Railway</div><span class="badge" style="background:${colorEstado(railway.estado)}20;color:${colorEstado(railway.estado)}">${iconoEstado(railway.estado)} OK</span></div><div style="color:#cbd5e1;font-size:14px;margin-top:8px">${railway.mensaje}</div></div>
 <div class="servicio" style="border-left:4px solid ${colorEstado(mikrowisp.estado)}"><div class="servicio-header"><div class="servicio-nombre">🌐 MikroWisp</div><span class="badge" style="background:${colorEstado(mikrowisp.estado)}20;color:${colorEstado(mikrowisp.estado)}">${iconoEstado(mikrowisp.estado)} ${mikrowisp.estado.toUpperCase()}</span></div><div style="color:#cbd5e1;font-size:14px;margin-top:8px">${mikrowisp.mensaje}</div></div>
@@ -347,6 +383,7 @@ app.get('/status', async (req, res) => {
 <div class="metrica"><div class="metrica-numero">${pagosDB.verificados.length}</div><div class="metrica-label">Verificados</div></div>
 <div class="metrica"><div class="metrica-numero">${pagosDB.rechazados.length}</div><div class="metrica-label">Rechazados</div></div>
 <div class="metrica"><div class="metrica-numero">${pagosDB.lista_negra.length}</div><div class="metrica-label">Lista Negra</div></div>
+<div class="metrica"><div class="metrica-numero">${sesionesClientes.size}</div><div class="metrica-label">Sesiones activas</div></div>
 </div>
 <div class="aviso-ram">⚠️ Base de datos en RAM - Los datos se resetean si el servidor reinicia</div>
 <div class="footer"><div>📍 Zamora, Ecuador · ${tiempoLocal}</div><div style="margin-top:8px"><a href="/admin/${ADMIN_TOKEN}">📊 Dashboard Contadora</a> · <a href="/health">Ver JSON</a></div></div>
@@ -357,14 +394,96 @@ app.get('/status', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════
+// 🆕 v6.6: ENDPOINTS DE SESIÓN
+// ════════════════════════════════════════════════════════
+
+// Verificar si tiene sesión activa (Mercately llama PRIMERO a este)
+app.post('/cliente/sesion', async (req, res) => {
+  try {
+    const { telefono } = req.body;
+    console.log(`🔍 [SESION] Verificando: ${telefono}`);
+    
+    if (!telefono) {
+      return res.json({
+        tiene_sesion: false,
+        mensaje: "Por favor, ingresa tu número de cédula para continuar."
+      });
+    }
+    
+    const sesion = obtenerSesion(telefono);
+    
+    if (sesion) {
+      // Ya tiene sesión activa - NO pedir cédula
+      console.log(`✅ [SESION] Activa para ${telefono} (${sesion.nombre})`);
+      return res.json({
+        tiene_sesion: true,
+        cedula: sesion.cedula,
+        nombre: sesion.nombre,
+        servicios: sesion.clientes.length,
+        mensaje: `¡Hola de nuevo ${sesion.nombre}! ¿En qué puedo ayudarte?`
+      });
+    } else {
+      // NO tiene sesión - pedir cédula
+      console.log(`❌ [SESION] No existe para ${telefono}`);
+      return res.json({
+        tiene_sesion: false,
+        mensaje: "Por favor, ingresa tu número de cédula para continuar."
+      });
+    }
+  } catch (error) {
+    console.error('❌ [SESION] Error:', error);
+    res.status(500).json({ 
+      tiene_sesion: false,
+      mensaje: '⚠️ Error del sistema.' 
+    });
+  }
+});
+
+// Cerrar sesión manualmente (botón "Salir")
+app.post('/cliente/salir', async (req, res) => {
+  try {
+    const { telefono } = req.body;
+    console.log(`🚪 [SALIR] Solicitud de ${telefono}`);
+    
+    if (!telefono) {
+      return res.json({
+        sesion_cerrada: false,
+        mensaje: "Error al cerrar sesión."
+      });
+    }
+    
+    const cerrada = cerrarSesion(telefono);
+    
+    if (cerrada) {
+      console.log(`✅ [SALIR] Sesión cerrada: ${telefono}`);
+      return res.json({
+        sesion_cerrada: true,
+        mensaje: "👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐\n\nSi necesitas ayuda nuevamente, solo escríbeme."
+      });
+    } else {
+      return res.json({
+        sesion_cerrada: false,
+        mensaje: "👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐"
+      });
+    }
+  } catch (error) {
+    console.error('❌ [SALIR] Error:', error);
+    res.status(500).json({ 
+      sesion_cerrada: false,
+      mensaje: '⚠️ Error del sistema.' 
+    });
+  }
+});
+
+// ════════════════════════════════════════════════════════
 // ENDPOINTS DE CHATBOT
 // ════════════════════════════════════════════════════════
 
 app.post('/cliente/buscar', async (req, res) => {
   try {
-    const { cedula, intento } = req.body;
+    const { cedula, telefono, intento } = req.body;
     const numeroIntento = parseInt(intento || 1);
-    console.log(`📞 [BUSCAR] Cédula: "${cedula}"`);
+    console.log(`📞 [BUSCAR] Cédula: "${cedula}" | Tel: ${telefono}`);
 
     if (!cedula) return res.json({ encontrado: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
 
@@ -375,26 +494,32 @@ app.post('/cliente/buscar', async (req, res) => {
     }
 
     const clientes = resultado.clientes;
-    const primerCliente = clientes[0];
     
-    // Sumar deuda total de TODOS los servicios
+    // 🆕 Filtrar duplicados por ID único
+    const clientesUnicos = clientes.filter((cliente, index, self) =>
+      index === self.findIndex(c => c.id === cliente.id)
+    );
+    
+    console.log(`📊 [BUSCAR] Clientes encontrados: ${clientes.length} | Únicos: ${clientesUnicos.length}`);
+    
+    const primerCliente = clientesUnicos[0];
+    
+    // Sumar deuda total de TODOS los servicios únicos
     let deudaTotal = 0;
     let facturasTotal = 0;
-    clientes.forEach(c => {
+    clientesUnicos.forEach(c => {
       deudaTotal += parseFloat(c.facturacion?.total_facturas || 0);
       facturasTotal += parseInt(c.facturacion?.facturas_nopagadas || 0);
     });
 
     const nombreCompleto = capitalizarNombre(primerCliente.nombre);
-    const esPrimeraVez = !yaFueSaludado(cedula);
-
-    let mensajeBienvenida;
-    if (esPrimeraVez) {
-      mensajeBienvenida = `✅ *Identidad verificada*\n\nBienvenido(a) Sr(a). *${nombreCompleto}*\n\n📋 ¿En qué podemos ayudarle hoy?`;
-      marcarComoSaludado(cedula);
-    } else {
-      mensajeBienvenida = `📋 ¿En qué más podemos ayudarle?`;
+    
+    // 🆕 GUARDAR SESIÓN (10 minutos)
+    if (telefono) {
+      guardarSesion(telefono, cedula, nombreCompleto, clientesUnicos);
     }
+
+    const mensajeBienvenida = `✅ *Identidad verificada*\n\nBienvenido(a) Sr(a). *${nombreCompleto}*\n\n📋 ¿En qué podemos ayudarle hoy?`;
 
     return res.json({
       encontrado: true, 
@@ -403,21 +528,37 @@ app.post('/cliente/buscar', async (req, res) => {
       cedula: cedula, 
       deuda: deudaTotal, 
       facturasPendientes: facturasTotal,
-      plan: clientes.length > 1 ? `${clientes.length} servicios` : (clientes[0].servicios?.[0]?.perfil || 'N/A'), 
+      plan: clientesUnicos.length > 1 ? `${clientesUnicos.length} servicios` : (clientesUnicos[0].servicios?.[0]?.perfil || 'N/A'), 
       mensaje: mensajeBienvenida
     });
   } catch (err) {
+    console.error('❌ [BUSCAR] Error:', err);
     res.status(500).json({ encontrado: false, transferir: true, mensaje: '⚠️ Error del sistema.' });
   }
 });
 
 app.post('/cliente/deuda', async (req, res) => {
   try {
-    const { cedula } = req.body;
-    if (!cedula) return res.json({ mensaje: '⚠️ Error: no se identificó al cliente.' });
-
-    const resultado = await buscarClientePorCedula(cedula);
-    if (!resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
+    const { cedula, telefono } = req.body;
+    
+    // Intentar obtener de sesión primero
+    let resultado;
+    if (telefono) {
+      const sesion = obtenerSesion(telefono);
+      if (sesion) {
+        resultado = { exito: true, clientes: sesion.clientes };
+        console.log(`💾 [DEUDA] Usando sesión de ${telefono}`);
+      }
+    }
+    
+    // Si no hay sesión, buscar por cédula
+    if (!resultado && cedula) {
+      resultado = await buscarClientePorCedula(cedula);
+    }
+    
+    if (!resultado || !resultado.exito) {
+      return res.json({ mensaje: '❌ No se encontró información del cliente.' });
+    }
 
     const clientes = resultado.clientes;
     const primerCliente = clientes[0];
@@ -458,17 +599,31 @@ app.post('/cliente/deuda', async (req, res) => {
       mensaje: `💰 *Estado de cuenta*\n\n💵 Total a pagar: *$${deudaTotal.toFixed(2)}*\n📋 Facturas pendientes: *${facturasTotal}*${desglose}\n\nPara pagar seleccione *"📸 Pagar mi servicio"* en el menú.`
     });
   } catch (err) {
+    console.error('❌ [DEUDA] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
 
 app.post('/pago/info', async (req, res) => {
   try {
-    const { cedula } = req.body;
-    if (!cedula) return res.json({ mensaje: '⚠️ Error: no se identificó al cliente.' });
-
-    const resultado = await buscarClientePorCedula(cedula);
-    if (!resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
+    const { cedula, telefono } = req.body;
+    
+    // Intentar obtener de sesión primero
+    let resultado;
+    if (telefono) {
+      const sesion = obtenerSesion(telefono);
+      if (sesion) {
+        resultado = { exito: true, clientes: sesion.clientes };
+      }
+    }
+    
+    if (!resultado && cedula) {
+      resultado = await buscarClientePorCedula(cedula);
+    }
+    
+    if (!resultado || !resultado.exito) {
+      return res.json({ mensaje: '❌ No se encontró información del cliente.' });
+    }
 
     const clientes = resultado.clientes;
     
@@ -483,29 +638,41 @@ app.post('/pago/info', async (req, res) => {
 
     res.json({ deuda: deudaTotal, mensaje: `${CUENTAS_BANCARIAS}\n\n💵 *Su deuda total: $${deudaTotal.toFixed(2)}*\n\n📸 Realice su transferencia y envíenos la *foto del comprobante* aquí mismo para activar su${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's' : ''}.` });
   } catch (err) {
+    console.error('❌ [PAGO-INFO] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.1.1: PROCESAR COMPROBANTE CON PROMESA DE PAGO
+// 🎓 v6.6: PROCESAR COMPROBANTE CON PROMESA DE PAGO
 // ════════════════════════════════════════════════════════
 app.post('/pago/comprobante', async (req, res) => {
   try {
-    const { cedula } = req.body;
-    console.log(`📸 [COMPROBANTE v6.3] Cédula: "${cedula}"`);
+    const { cedula, telefono, nombre_contacto } = req.body;
+    console.log(`📸 [COMPROBANTE v6.6] Cédula: "${cedula}" | Tel: ${telefono}`);
 
-    if (!cedula) return res.json({ activado: false, mensaje: '⚠️ Error: no se identificó al cliente.' });
-
-    const resultadoCliente = await buscarClientePorCedula(cedula);
-    if (!resultadoCliente.exito) {
+    // Intentar obtener de sesión primero
+    let resultadoCliente;
+    if (telefono) {
+      const sesion = obtenerSesion(telefono);
+      if (sesion) {
+        resultadoCliente = { exito: true, clientes: sesion.clientes };
+        console.log(`💾 [COMPROBANTE] Usando sesión de ${telefono}`);
+      }
+    }
+    
+    if (!resultadoCliente && cedula) {
+      resultadoCliente = await buscarClientePorCedula(cedula);
+    }
+    
+    if (!resultadoCliente || !resultadoCliente.exito) {
       return res.json({ activado: false, mensaje: '❌ No se encontró información del cliente.' });
     }
 
     const clientes = resultadoCliente.clientes;
     const primerCliente = clientes[0];
-    const nombreCompleto = capitalizarNombre(primerCliente.nombre);
-    const telefono = primerCliente.movil || primerCliente.telefono || '';
+    const nombreCompleto = nombre_contacto || capitalizarNombre(primerCliente.nombre);
+    const telefonoFinal = telefono || primerCliente.movil || primerCliente.telefono || '';
     
     // Calcular deuda total de TODOS los servicios
     let deudaTotal = 0;
@@ -519,16 +686,16 @@ app.post('/pago/comprobante', async (req, res) => {
       return res.json({ activado: false, mensaje: `✅ Estimado(a) ${nombreCompleto}, no tiene deudas pendientes.\n\n¡Está al día! 🎉` });
     }
 
-    if (await estaEnListaNegra(cedula)) {
-      console.log(`🚫 [COMPROBANTE] Cliente en lista negra: ${cedula}`);
+    if (await estaEnListaNegra(cedula || primerCliente.cedula)) {
+      console.log(`🚫 [COMPROBANTE] Cliente en lista negra`);
       return res.json({
         activado: false,
         mensaje: `⚠️ Por seguridad, su pago será verificado manualmente.\n\nUn asesor le contactará. 📞`
       });
     }
 
-    if (await tienePagoPendiente(cedula)) {
-      console.log(`⚠️ [COMPROBANTE] Ya tiene pago pendiente: ${cedula}`);
+    if (await tienePagoPendiente(cedula || primerCliente.cedula)) {
+      console.log(`⚠️ [COMPROBANTE] Ya tiene pago pendiente`);
       return res.json({
         activado: true,
         mensaje: `✅ *${nombreCompleto}*, ya tenemos su comprobante registrado.\n\nSu${clientes.length > 1 ? 's' : ''} servicio${clientes.length > 1 ? 's están' : ' está'} activo${clientes.length > 1 ? 's' : ''} y ${clientes.length > 1 ? 'serán verificados' : 'será verificado'} en breve.`
@@ -551,7 +718,7 @@ app.post('/pago/comprobante', async (req, res) => {
     if (serviciosActivados > 0) {
       console.log(`⚡ [COMPROBANTE] Total activados: ${serviciosActivados}/${clientes.length} servicios`);
     } else {
-      console.log(`⚠️ [COMPROBANTE] MikroWisp falló, pero continuamos. Contadora activará manualmente: ${cedula}`);
+      console.log(`⚠️ [COMPROBANTE] MikroWisp falló, pero continuamos. Contadora activará manualmente`);
     }
 
     // Preparar lista de servicios para guardar
@@ -567,10 +734,10 @@ app.post('/pago/comprobante', async (req, res) => {
     const fechaLimite = new Date(ahora.getTime() + DIAS_PROMESA * 24 * 60 * 60 * 1000);
 
     const pago = {
-      cedula: cedula,
+      cedula: cedula || primerCliente.cedula,
       nombre: nombreCompleto,
       idcliente: primerCliente.id,
-      telefono: telefono,
+      telefono: telefonoFinal,
       plan: clientes.length > 1 ? `${clientes.length} servicios` : (clientes[0].servicios?.[0]?.perfil || 'N/A'),
       servicios: listaServicios,
       deuda: deudaTotal,
@@ -589,8 +756,8 @@ app.post('/pago/comprobante', async (req, res) => {
 NUEVO PAGO PENDIENTE DE VERIFICACIÓN
 
 Cliente: ${nombreCompleto}
-Cédula: ${cedula}
-Teléfono: ${telefono}
+Cédula: ${cedula || primerCliente.cedula}
+Teléfono: ${telefonoFinal}
 Deuda total: $${deudaTotal.toFixed(2)}
 Servicios activados: ${serviciosActivados}/${clientes.length}
 ${listaServicios.map(s => `  - ${s.nombre} (${s.plan})`).join('\n')}
@@ -617,11 +784,24 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
 
 app.post('/cliente/plan', async (req, res) => {
   try {
-    const { cedula } = req.body;
-    if (!cedula) return res.json({ mensaje: '⚠️ Error: no se identificó al cliente.' });
-
-    const resultado = await buscarClientePorCedula(cedula);
-    if (!resultado.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
+    const { cedula, telefono } = req.body;
+    
+    // Intentar obtener de sesión primero
+    let resultado;
+    if (telefono) {
+      const sesion = obtenerSesion(telefono);
+      if (sesion) {
+        resultado = { exito: true, clientes: sesion.clientes };
+      }
+    }
+    
+    if (!resultado && cedula) {
+      resultado = await buscarClientePorCedula(cedula);
+    }
+    
+    if (!resultado || !resultado.exito) {
+      return res.json({ mensaje: '❌ No se encontró información del cliente.' });
+    }
 
     const clientes = resultado.clientes;
     const primerCliente = clientes[0];
@@ -654,6 +834,7 @@ app.post('/cliente/plan', async (req, res) => {
       return res.json({ mensaje });
     }
   } catch (err) {
+    console.error('❌ [PLAN] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
@@ -671,10 +852,13 @@ app.post('/soporte/reporte', async (req, res) => {
     let nombreCliente = 'Cliente';
     if (cedula) {
       const r = await buscarClientePorCedula(cedula);
-      if (r.exito) nombreCliente = capitalizarNombre(r.cliente.nombre);
+      if (r.exito && r.clientes?.length > 0) {
+        nombreCliente = capitalizarNombre(r.clientes[0].nombre);
+      }
     }
     res.json({ ticket, mensaje: `🔧 *Reporte registrado*\n\n📋 #${ticket}\n👤 ${nombreCliente}\n⚠️ ${problemas[problema] || descripcion}\n\n✅ Equipo técnico notificado.` });
   } catch (err) {
+    console.error('❌ [SOPORTE] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
@@ -705,6 +889,7 @@ app.post('/soporte/cambio-clave', async (req, res) => {
       mensaje: `🔑 *Solicitud registrada*\n\n📋 #${ticket}\n🔐 Nueva clave: ${nueva_clave}\n\n✅ Se procesará en *2h hábiles*.` 
     });
   } catch (err) {
+    console.error('❌ [CAMBIO-CLAVE] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
@@ -716,13 +901,11 @@ app.get('/nuevo-cliente', (req, res) => {
 app.get('/despedida', (req, res) => res.json({ mensaje: `👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐` }));
 
 app.post('/despedida', (req, res) => {
-  const { cedula } = req.body;
-  if (cedula) reiniciarSaludo(cedula);
   res.json({ mensaje: `👋 *¡Hasta pronto!*\n\nGracias por contactar a *FibraNet* 🌐` });
 });
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.1.1: DASHBOARD DE ADMINISTRACIÓN
+// 🎓 v6.6: DASHBOARD DE ADMINISTRACIÓN
 // ════════════════════════════════════════════════════════
 
 app.get('/admin/:token', async (req, res) => {
@@ -781,7 +964,7 @@ h2{margin-top:32px;margin-bottom:16px;color:#0f172a;font-size:20px;display:flex;
 </style>
 </head><body><div class="container">
 <h1>📊 <span>FibraNet</span> · Panel de Verificación</h1>
-<div class="aviso-ram">⚠️ Base de datos en RAM - Los datos se resetean si el servidor reinicia</div>
+<div class="aviso-ram">⚠️ Base de datos en RAM - Los datos se resetean si el servidor reinicia | 🕐 Sesiones activas: ${sesionesClientes.size}</div>
 
 <div class="metricas">
 <div class="metrica"><div class="metrica-numero metrica-pendiente">${pagosDB.pendientes.length}</div><div class="metrica-label">⏰ Pendientes</div></div>
@@ -803,8 +986,7 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
   else if (diasRestantes <= 2) { urgenciaClass = 'alta'; urgenciaTexto = `⚠️ ${diasRestantes}d`; }
   else if (diasRestantes <= 5) { urgenciaClass = 'media'; urgenciaTexto = `${diasRestantes} días`; }
   
-  const telefonoLimpio = p.telefono?.replace(/\D/g, '') || '';
-  const mercatelyUrl = `https://app.mercately.com/conversations/${telefonoLimpio}`;
+  const telefonoDisplay = p.telefono || 'N/A';
 
   return `<div class="tarjeta ${esUrgente ? 'urgente' : ''}">
 <div class="tarjeta-header">
@@ -813,12 +995,11 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
 </div>
 <div class="tarjeta-info">
 <div class="info-item"><div class="info-label">🆔 Cédula</div><div class="info-valor">${p.cedula}</div></div>
-<div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
+<div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${telefonoDisplay}</div></div>
 <div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
 <div class="info-item"><div class="info-label">📋 Servicios</div><div class="info-valor">${p.servicios ? p.servicios.map(s => s.nombre).join(', ') : p.plan}</div></div>
 </div>
 <div class="botones">
-<a href="${mercatelyUrl}" target="_blank" class="btn btn-mercately">💬 Ver en Mercately</a>
 <button class="btn btn-verificar" onclick="verificar('${p.cedula}')">✅ Verificar</button>
 <button class="btn btn-rechazar" onclick="rechazar('${p.cedula}')">❌ Rechazar</button>
 </div>
@@ -836,8 +1017,6 @@ ${pagosDB.pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendie
 ${pagosDB.verificados.length === 0 ? '<div class="vacio">No hay registros</div>' : pagosDB.verificados.slice().reverse().map(p => {
   const fechaRecibido = new Date(p.fecha_recibido);
   const fechaVerificado = new Date(p.fecha_verificado);
-  const telefonoLimpio = p.telefono?.replace(/\D/g, '') || '';
-  const mercatelyUrl = `https://app.mercately.com/conversations/${telefonoLimpio}`;
   
   return `<div class="tarjeta verificada">
 <div class="tarjeta-header">
@@ -851,9 +1030,6 @@ ${pagosDB.verificados.length === 0 ? '<div class="vacio">No hay registros</div>'
 <div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
 <div class="info-item"><div class="info-label">📋 Plan</div><div class="info-valor">${p.plan}</div></div>
 </div>
-<div class="botones">
-<a href="${mercatelyUrl}" target="_blank" class="btn btn-mercately">💬 Ver en Mercately</a>
-</div>
 </div>`;
 }).join('')}
 </div>
@@ -866,8 +1042,6 @@ ${pagosDB.verificados.length === 0 ? '<div class="vacio">No hay registros</div>'
 ${pagosDB.rechazados.length === 0 ? '<div class="vacio">No hay registros</div>' : pagosDB.rechazados.slice().reverse().map(p => {
   const fechaRecibido = new Date(p.fecha_recibido);
   const fechaRechazado = new Date(p.fecha_rechazado);
-  const telefonoLimpio = p.telefono?.replace(/\D/g, '') || '';
-  const mercatelyUrl = `https://app.mercately.com/conversations/${telefonoLimpio}`;
   
   return `<div class="tarjeta rechazada">
 <div class="tarjeta-header">
@@ -880,9 +1054,6 @@ ${pagosDB.rechazados.length === 0 ? '<div class="vacio">No hay registros</div>' 
 <div class="info-item"><div class="info-label">📞 Teléfono</div><div class="info-valor">${p.telefono || 'N/A'}</div></div>
 <div class="info-item"><div class="info-label">💰 Deuda</div><div class="info-valor">$${p.deuda.toFixed(2)}</div></div>
 <div class="info-item"><div class="info-label">📋 Plan</div><div class="info-valor">${p.plan}</div></div>
-</div>
-<div class="botones">
-<a href="${mercatelyUrl}" target="_blank" class="btn btn-mercately">💬 Ver en Mercately</a>
 </div>
 </div>`;
 }).join('')}
@@ -968,6 +1139,7 @@ app.post('/admin/:token/verificar', async (req, res) => {
     console.log(`✅ [ADMIN] Verificado: ${cedula}`);
     res.json({ exito: true });
   } catch (err) {
+    console.error('❌ [ADMIN-VERIFICAR] Error:', err);
     res.status(500).json({ exito: false, error: err.message });
   }
 });
@@ -1008,12 +1180,13 @@ app.post('/admin/:token/rechazar', async (req, res) => {
     console.log(`❌ [ADMIN] Rechazado: ${cedula}`);
     res.json({ exito: true });
   } catch (err) {
+    console.error('❌ [ADMIN-RECHAZAR] Error:', err);
     res.status(500).json({ exito: false, error: err.message });
   }
 });
 
 // ════════════════════════════════════════════════════════
-// 🎓 v6.1.1: VERIFICACIÓN DE VENCIMIENTOS
+// 🎓 v6.6: VERIFICACIÓN DE VENCIMIENTOS
 // ════════════════════════════════════════════════════════
 
 async function verificarVencimientos() {
@@ -1105,8 +1278,9 @@ setTimeout(verificarVencimientos, 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 FibraNet Webhook v6.1.1 (RAM) en puerto ${PORT}`);
+  console.log(`🚀 FibraNet Webhook v6.6 (Sesiones 10min) en puerto ${PORT}`);
   console.log(`📊 Sistema: Promesa de Pago ${DIAS_PROMESA} días`);
   console.log(`💾 Base de datos en RAM - se resetea al reiniciar`);
+  console.log(`🕐 Sesiones: ${SESION_TTL_MS / 60000} minutos de duración`);
   console.log(`📧 Contadora: ${CONTADORA_EMAIL}`);
 });
