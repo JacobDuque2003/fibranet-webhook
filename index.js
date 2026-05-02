@@ -176,7 +176,14 @@ async function activarServicioMikroWisp(idcliente) {
     });
     const data = await response.json();
     console.log(`🔧 [MIKROWISP] Respuesta activación:`, JSON.stringify(data));
-    return response.ok && data.estado === 'exito';
+
+    // ✅ v6.9: Tratar como éxito si activó O si ya estaba activo
+    if (data.estado === 'exito') return true;
+    if (data.mensaje?.toLowerCase().includes('activo')) {
+      console.log(`✅ [MIKROWISP] Cliente ya estaba ACTIVO - se considera éxito`);
+      return true;
+    }
+    return false;
   } catch (err) {
     console.error('❌ Error activar servicio:', err.message);
     return false;
@@ -293,14 +300,14 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.8 (Fix servicios únicos)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '6.9 (Fix activación + servicios únicos)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi] = await Promise.all([verificarMikroWisp(), verificarMercatelyAPI()]);
   const mercately = verificarMercately();
   res.json({
     estado_general: '✅',
-    version: '6.8 (Fix servicios únicos)',
+    version: '6.9 (Fix activación + servicios únicos)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately },
     pagos: {
       pendientes: pagosDB.pendientes.length,
@@ -1082,7 +1089,7 @@ setTimeout(verificarVencimientos, 60 * 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 FibraNet Webhook v6.8 (Fix servicios únicos) en puerto ${PORT}`);
+  console.log(`🚀 FibraNet Webhook v6.9 (Fix activación + servicios únicos) en puerto ${PORT}`);
   console.log(`📊 Sistema: Promesa de Pago ${DIAS_PROMESA} días`);
   console.log(`💾 Base de datos en RAM - se resetea al reiniciar`);
   console.log(`🕐 Sesiones: ${SESION_TTL_MS / 60000} minutos de duración`);
