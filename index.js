@@ -510,7 +510,7 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.5 (Revert HTTP 200)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.6 (Fix JSON PostgreSQL)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi, postgresql] = await Promise.all([
@@ -521,7 +521,7 @@ app.get('/health', async (req, res) => {
   const listaNegra = await contarListaNegra();
   res.json({
     estado_general: '✅',
-    version: '7.5 (Revert HTTP 200)',
+    version: '7.6 (Fix JSON PostgreSQL)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately, postgresql },
     pagos: { pendientes: pendientes.length, lista_negra: listaNegra },
     sesiones: { activas: sesionesClientes.size, ttl_minutos: 10 }
@@ -787,13 +787,18 @@ app.post('/pago/comprobante', async (req, res) => {
 
     // PASO 1: Activar servicio en MikroWisp
     let serviciosActivados = 0;
+    console.log(`🔄 [COMPROBANTE] Intentando activar ${clientes.length} servicios...`);
     for (const cliente of clientes) {
+      console.log(`🔄 [COMPROBANTE] Activando cliente ID: ${cliente.id} - ${cliente.nombre}`);
       const activado = await activarServicioMikroWisp(cliente.id);
       if (activado) {
         serviciosActivados++;
         console.log(`✅ [COMPROBANTE] Activado: ${cliente.nombre} (ID: ${cliente.id})`);
+      } else {
+        console.log(`⚠️ [COMPROBANTE] No se pudo activar: ${cliente.nombre} (ID: ${cliente.id})`);
       }
     }
+    console.log(`📊 [COMPROBANTE] Activados: ${serviciosActivados}/${clientes.length}`);
 
     // PASO 2: Obtener facturas pendientes y registrar promesas de pago
     const ahora = new Date();
@@ -1228,11 +1233,15 @@ app.post('/admin/:token/rechazar', async (req, res) => {
       await suspenderServicioMikroWisp(pago.idcliente, 'Pago rechazado');
     }
 
-    // Mover a rechazados
+    // Mover a rechazados - asegurar que servicios sea JSON string válido
+    const serviciosJson = typeof pago.servicios === 'string' 
+      ? pago.servicios 
+      : JSON.stringify(pago.servicios || []);
+    
     await pool.query(`
       INSERT INTO pagos_rechazados (cedula, nombre, idcliente, telefono, plan, servicios, deuda, fecha_recibido, fecha_rechazado)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
-    `, [pago.cedula, pago.nombre, pago.idcliente, pago.telefono, pago.plan, pago.servicios, pago.deuda, pago.fecha_recibido]);
+    `, [pago.cedula, pago.nombre, pago.idcliente, pago.telefono, pago.plan, serviciosJson, pago.deuda, pago.fecha_recibido]);
 
     await pool.query("DELETE FROM pagos_pendientes WHERE cedula=$1 AND estado='PENDIENTE'", [cedula]);
 
@@ -1302,10 +1311,14 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
           await suspenderServicioMikroWisp(pago.idcliente, 'Auto-corte');
         }
 
+        const serviciosJsonCron = typeof pago.servicios === 'string'
+          ? pago.servicios
+          : JSON.stringify(pago.servicios || []);
+        
         await pool.query(`
           INSERT INTO pagos_rechazados (cedula, nombre, idcliente, telefono, plan, servicios, deuda, fecha_recibido, fecha_rechazado, estado)
           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),'AUTO_CORTADO')
-        `, [pago.cedula, pago.nombre, pago.idcliente, pago.telefono, pago.plan, pago.servicios, pago.deuda, pago.fecha_recibido]);
+        `, [pago.cedula, pago.nombre, pago.idcliente, pago.telefono, pago.plan, serviciosJsonCron, pago.deuda, pago.fecha_recibido]);
 
         await pool.query("DELETE FROM pagos_pendientes WHERE cedula=$1 AND estado='PENDIENTE'", [pago.cedula]);
 
@@ -1341,7 +1354,7 @@ const PORT = process.env.PORT || 3000;
 async function iniciar() {
   await inicializarDB();
   app.listen(PORT, () => {
-    console.log(`🚀 FibraNet Webhook v7.5 (Revert HTTP 200) en puerto ${PORT}`);
+    console.log(`🚀 FibraNet Webhook v7.6 (Fix JSON PostgreSQL) en puerto ${PORT}`);
     console.log(`📊 Promesa de Pago: ${DIAS_PROMESA} días`);
     console.log(`🗄️ PostgreSQL: ${process.env.DATABASE_URL ? 'Configurado ✅' : 'SIN CONFIGURAR ❌'}`);
     console.log(`🕐 Sesiones: 10 minutos`);
