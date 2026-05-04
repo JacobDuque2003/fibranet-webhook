@@ -190,49 +190,55 @@ async function contarListaNegra() {
     return 0;
   }
 }
-function jsonSeguro(valor, fallback = []) {
-  if (valor === null || valor === undefined) return JSON.stringify(fallback);
+function normalizarJson(valor, fallback = []) {
+  if (valor === null || valor === undefined) return fallback;
+
+  if (Array.isArray(valor)) return valor;
+
+  if (typeof valor === 'object') return valor;
 
   if (typeof valor === 'string') {
-    const limpio = valor.trim();
+    let actual = valor.trim();
 
-    if (!limpio || limpio === '[object Object]') {
-      return JSON.stringify(fallback);
-    }
+    if (!actual || actual === '[object Object]') return fallback;
 
-    try {
-      JSON.parse(limpio);
-      return limpio;
-    } catch (err) {
-      console.error('⚠️ [JSON] Valor JSON inválido, usando fallback:', limpio.substring(0, 100));
-      return JSON.stringify(fallback);
+    for (let i = 0; i < 3; i++) {
+      try {
+        const parsed = JSON.parse(actual);
+
+        if (typeof parsed === 'string') {
+          actual = parsed.trim();
+          continue;
+        }
+
+        return parsed;
+      } catch (err) {
+        try {
+          const reparado = actual
+            .replace(/\\"/g, '"')
+            .replace(/^"+|"+$/g, '');
+
+          const parsedReparado = JSON.parse(reparado);
+          return parsedReparado;
+        } catch (err2) {
+          console.error('⚠️ [JSON] Valor dañado, usando fallback:', actual.substring(0, 150));
+          return fallback;
+        }
+      }
     }
   }
 
-  try {
-    return JSON.stringify(valor);
-  } catch (err) {
-    return JSON.stringify(fallback);
-  }
+  return fallback;
+}
+
+function jsonSeguro(valor, fallback = []) {
+  return JSON.stringify(normalizarJson(valor, fallback));
 }
 
 function parseJsonArraySeguro(valor) {
-  if (!valor) return [];
-  if (Array.isArray(valor)) return valor;
-
-  if (typeof valor === 'string') {
-    try {
-      const parsed = JSON.parse(valor);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (err) {
-      console.error('⚠️ [JSON] No se pudo leer array JSON:', valor.substring(0, 100));
-      return [];
-    }
-  }
-
-  return [];
+  const normalizado = normalizarJson(valor, []);
+  return Array.isArray(normalizado) ? normalizado : [];
 }
-
 
 // ════════════════════════════════════════════════════════
 // v7.0: SISTEMA DE SESIONES (10 MINUTOS)
@@ -1232,8 +1238,8 @@ app.post('/admin/:token/verificar', async (req, res) => {
       }
     }
 
-    const serviciosJson = jsonSeguro(pago.servicios, []);
-    const idfacturasJson = jsonSeguro(idfacturas, []);
+    const serviciosJson = JSON.stringify(parseJsonArraySeguro(pago.servicios));
+    const idfacturasJson = JSON.stringify(parseJsonArraySeguro(pago.idfacturas));
 
     const client = await pool.connect();
 
@@ -1303,7 +1309,7 @@ app.post('/admin/:token/rechazar', async (req, res) => {
     if (result.rows.length === 0) return res.json({ exito: false, error: 'No encontrado' });
 
     const pago = result.rows[0];
-    const servicios = typeof pago.servicios === 'string' ? JSON.parse(pago.servicios) : (pago.servicios || []);
+    const servicios = parseJsonArraySeguro(pago.servicios);
 
     // Suspender servicios en MikroWisp
     if (servicios.length > 0) {
@@ -1315,7 +1321,7 @@ app.post('/admin/:token/rechazar', async (req, res) => {
     }
 
     // Mover a rechazados - asegurar que servicios sea JSON string válido
-    const serviciosJson = jsonSeguro(pago.servicios, []);
+    const serviciosJson = JSON.stringify(parseJsonArraySeguro(pago.servicios));
 
     
     await pool.query(`
@@ -1381,7 +1387,7 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
 
       if (diasRestantes <= 0) {
         console.log(`🔴 [CRON] Auto-corte: ${pago.cedula}`);
-        const servicios = typeof pago.servicios === 'string' ? JSON.parse(pago.servicios) : (pago.servicios || []);
+        const servicios = parseJsonArraySeguro(pago.servicios);
 
         if (servicios.length > 0) {
           for (const servicio of servicios) {
@@ -1391,7 +1397,7 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
           await suspenderServicioMikroWisp(pago.idcliente, 'Auto-corte');
         }
 
-        const serviciosJsonCron = jsonSeguro(pago.servicios, []);
+        const serviciosJsonCron = JSON.stringify(parseJsonArraySeguro(pago.servicios));
         
         await pool.query(`
           INSERT INTO pagos_rechazados (cedula, nombre, idcliente, telefono, plan, servicios, deuda, fecha_recibido, fecha_rechazado, estado)
