@@ -498,7 +498,7 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.1 (Fix servicios por cliente)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.2 (Fix error HTTP 400)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi, postgresql] = await Promise.all([
@@ -509,7 +509,7 @@ app.get('/health', async (req, res) => {
   const listaNegra = await contarListaNegra();
   res.json({
     estado_general: '✅',
-    version: '7.1 (Fix servicios por cliente)',
+    version: '7.2 (Fix error HTTP 400)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately, postgresql },
     pagos: { pendientes: pendientes.length, lista_negra: listaNegra },
     sesiones: { activas: sesionesClientes.size, ttl_minutos: 10 }
@@ -601,19 +601,19 @@ app.post('/cliente/buscar', async (req, res) => {
     const numeroIntento = parseInt(intento || 1);
     console.log(`📞 [BUSCAR] Cédula: "${cedula}" | Tel: ${telefono}`);
 
-    if (!cedula) return res.json({ encontrado: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
+    if (!cedula) return res.status(400).json({ encontrado: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
 
     const resultado = await buscarClientePorCedula(cedula);
     if (!resultado.exito) {
-      // v7.0: Menú error simplificado y claro
+      // v7.2: Retornar HTTP 400 para que Mercately vaya por rama "Error"
       if (numeroIntento >= 2) {
-        return res.json({
+        return res.status(400).json({
           encontrado: false,
           transferir: true,
           mensaje: `😕 No encontramos ningún cliente con esa cédula.\n\nUn asesor te ayudará. 👨‍💻\n\n📞 *098 877 3995*`
         });
       }
-      return res.json({
+      return res.status(400).json({
         encontrado: false,
         transferir: false,
         mensaje: `❌ No encontré ningún cliente con la cédula *${cedula}*.\n\n¿Deseas intentar con otra cédula o hablar con un asesor?`
@@ -1330,7 +1330,7 @@ const PORT = process.env.PORT || 3000;
 async function iniciar() {
   await inicializarDB();
   app.listen(PORT, () => {
-    console.log(`🚀 FibraNet Webhook v7.1 (Fix servicios por cliente) en puerto ${PORT}`);
+    console.log(`🚀 FibraNet Webhook v7.2 (Fix error HTTP 400) en puerto ${PORT}`);
     console.log(`📊 Promesa de Pago: ${DIAS_PROMESA} días`);
     console.log(`🗄️ PostgreSQL: ${process.env.DATABASE_URL ? 'Configurado ✅' : 'SIN CONFIGURAR ❌'}`);
     console.log(`🕐 Sesiones: 10 minutos`);
