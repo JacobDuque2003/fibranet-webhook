@@ -190,6 +190,49 @@ async function contarListaNegra() {
     return 0;
   }
 }
+function jsonSeguro(valor, fallback = []) {
+  if (valor === null || valor === undefined) return JSON.stringify(fallback);
+
+  if (typeof valor === 'string') {
+    const limpio = valor.trim();
+
+    if (!limpio || limpio === '[object Object]') {
+      return JSON.stringify(fallback);
+    }
+
+    try {
+      JSON.parse(limpio);
+      return limpio;
+    } catch (err) {
+      console.error('⚠️ [JSON] Valor JSON inválido, usando fallback:', limpio.substring(0, 100));
+      return JSON.stringify(fallback);
+    }
+  }
+
+  try {
+    return JSON.stringify(valor);
+  } catch (err) {
+    return JSON.stringify(fallback);
+  }
+}
+
+function parseJsonArraySeguro(valor) {
+  if (!valor) return [];
+  if (Array.isArray(valor)) return valor;
+
+  if (typeof valor === 'string') {
+    try {
+      const parsed = JSON.parse(valor);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      console.error('⚠️ [JSON] No se pudo leer array JSON:', valor.substring(0, 100));
+      return [];
+    }
+  }
+
+  return [];
+}
+
 
 // ════════════════════════════════════════════════════════
 // v7.0: SISTEMA DE SESIONES (10 MINUTOS)
@@ -1060,8 +1103,8 @@ ${pendientes.length === 0 ? '<div class="vacio">🎉 No hay pagos pendientes</di
   if (diasRestantes <= 0) { urgenciaClass = 'alta'; urgenciaTexto = 'VENCIDO'; }
   else if (diasRestantes <= 2) { urgenciaClass = 'alta'; urgenciaTexto = `⚠️ ${diasRestantes}d`; }
   else if (diasRestantes <= 5) { urgenciaClass = 'media'; }
-  const servicios = typeof p.servicios === 'string' ? JSON.parse(p.servicios) : p.servicios;
-  const idfacturas = typeof p.idfacturas === 'string' ? JSON.parse(p.idfacturas) : (p.idfacturas || []);
+  const servicios = parseJsonArraySeguro(p.servicios);
+  const idfacturas = parseJsonArraySeguro(p.idfacturas);
   return `<div class="tarjeta ${esUrgente ? 'urgente' : ''}">
 <div>
   <div class="tarjeta-titulo">${p.nombre} <span class="urgencia ${urgenciaClass}">${urgenciaTexto}</span>${idfacturas.length > 0 ? '<span class="promesa-badge">📝 Promesa en MikroWisp</span>' : ''}</div>
@@ -1162,35 +1205,70 @@ setTimeout(() => location.reload(), 30000);
 
 app.post('/admin/:token/verificar', async (req, res) => {
   if (req.params.token !== ADMIN_TOKEN) return res.status(403).json({ error: 'Acceso denegado' });
+
   try {
     const { cedula } = req.body;
+
     const result = await pool.query(
-      "SELECT * FROM pagos_pendientes WHERE cedula=$1 AND estado='PENDIENTE'", [cedula]
+      "SELECT * FROM pagos_pendientes WHERE cedula=$1 AND estado='PENDIENTE'",
+      [cedula]
     );
-    if (result.rows.length === 0) return res.json({ exito: false, error: 'No encontrado' });
+
+    if (result.rows.length === 0) {
+      return res.json({ exito: false, error: 'No encontrado' });
+    }
 
     const pago = result.rows[0];
-    const idfacturas = typeof pago.idfacturas === 'string' ? JSON.parse(pago.idfacturas) : (pago.idfacturas || []);
+    const idfacturas = parseJsonArraySeguro(pago.idfacturas);
 
-    // PAGAR FACTURAS EN MIKROWISP
     let facturasPagadas = 0;
+
     for (const factura of idfacturas) {
       const pagado = await pagarFacturaMikroWisp(factura.id, factura.monto || pago.deuda);
+
       if (pagado) {
         facturasPagadas++;
         console.log(`💳 [VERIFICAR] Factura ${factura.id} pagada en MikroWisp`);
       }
     }
 
-    // Mover a verificados en PostgreSQL
-    await pool.query(`
-      INSERT INTO pagos_verificados (cedula, nombre, idcliente, telefono, plan, servicios, deuda, idfacturas, fecha_recibido, fecha_verificado)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
-    `, [pago.cedula, pago.nombre, pago.idcliente, pago.telefono, pago.plan, pago.servicios, pago.deuda, pago.idfacturas, pago.fecha_recibido]);
+    const serviciosJson = jsonSeguro(pago.servicios, []);
+    const idfacturasJson = jsonSeguro(idfacturas, []);
 
-    await pool.query("DELETE FROM pagos_pendientes WHERE cedula=$1 AND estado='PENDIENTE'", [cedula]);
+    const client = await pool.connect();
 
-    // Notificar cliente por WhatsApp
+    try {
+      await client.query('BEGIN');
+
+      await client.query(`
+        INSERT INTO pagos_verificados
+        (cedula, nombre, idcliente, telefono, plan, servicios, deuda, idfacturas, fecha_recibido, fecha_verificado)
+        VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8::jsonb,$9,NOW())
+      `, [
+        pago.cedula,
+        pago.nombre,
+        pago.idcliente,
+        pago.telefono,
+        pago.plan,
+        serviciosJson,
+        pago.deuda,
+        idfacturasJson,
+        pago.fecha_recibido
+      ]);
+
+      await client.query(
+        "DELETE FROM pagos_pendientes WHERE cedula=$1 AND estado='PENDIENTE'",
+        [cedula]
+      );
+
+      await client.query('COMMIT');
+    } catch (dbErr) {
+      await client.query('ROLLBACK');
+      throw dbErr;
+    } finally {
+      client.release();
+    }
+
     if (pago.telefono) {
       try {
         await fetch(`${MERCATELY_API_URL}/whatsapp_messages`, {
@@ -1201,11 +1279,14 @@ app.post('/admin/:token/verificar', async (req, res) => {
             message: `✅ *Pago confirmado*\n\nEstimado(a) ${pago.nombre}, su pago ha sido verificado y registrado.\n\n¡Gracias por confiar en FibraNet! 🌐`
           })
         });
-      } catch (e) { console.error('Error notificar:', e.message); }
+      } catch (e) {
+        console.error('Error notificar:', e.message);
+      }
     }
 
     console.log(`✅ [ADMIN] Verificado: ${cedula} | Facturas pagadas en MikroWisp: ${facturasPagadas}`);
     res.json({ exito: true, facturasPagadas });
+
   } catch (err) {
     console.error('❌ [ADMIN-VERIFICAR] Error:', err);
     res.status(500).json({ exito: false, error: err.message });
@@ -1234,9 +1315,8 @@ app.post('/admin/:token/rechazar', async (req, res) => {
     }
 
     // Mover a rechazados - asegurar que servicios sea JSON string válido
-    const serviciosJson = typeof pago.servicios === 'string' 
-      ? pago.servicios 
-      : JSON.stringify(pago.servicios || []);
+    const serviciosJson = jsonSeguro(pago.servicios, []);
+
     
     await pool.query(`
       INSERT INTO pagos_rechazados (cedula, nombre, idcliente, telefono, plan, servicios, deuda, fecha_recibido, fecha_rechazado)
@@ -1311,9 +1391,7 @@ Dashboard: https://mindful-commitment-production.up.railway.app/admin/${ADMIN_TO
           await suspenderServicioMikroWisp(pago.idcliente, 'Auto-corte');
         }
 
-        const serviciosJsonCron = typeof pago.servicios === 'string'
-          ? pago.servicios
-          : JSON.stringify(pago.servicios || []);
+        const serviciosJsonCron = jsonSeguro(pago.servicios, []);
         
         await pool.query(`
           INSERT INTO pagos_rechazados (cedula, nombre, idcliente, telefono, plan, servicios, deuda, fecha_recibido, fecha_rechazado, estado)
