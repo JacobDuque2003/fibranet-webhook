@@ -274,6 +274,8 @@ async function buscarClientePorCedula(cedula, useCache = true) {
 // ════════════════════════════════════════════════════════
 
 // Obtener facturas pendientes de un cliente
+// MikroWisp: NO usar estado="pendiente", retorna facturas con estado "vencido"
+// Llamar sin estado y filtrar las no pagadas (cobrado = "0.00")
 async function obtenerFacturasPendientes(idcliente) {
   try {
     const response = await fetch(`${MIKROWISP_URL}/api/v1/GetInvoices`, {
@@ -281,18 +283,28 @@ async function obtenerFacturasPendientes(idcliente) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         token: MIKROWISP_TOKEN,
-        idcliente: idcliente,
-        estado: 'pendiente'
+        idcliente: parseInt(idcliente)
+        // Sin parámetro estado - MikroWisp ignora "pendiente"
       })
     });
     const data = await response.json();
-    if (data.estado === 'exito' && data.datos?.length > 0) {
-      console.log(`📋 [FAKTURAS] Cliente ${idcliente}: ${data.datos.length} facturas pendientes`);
-      return data.datos;
+    
+    if (data.estado === 'exito' && data.facturas?.length > 0) {
+      // Filtrar solo facturas que realmente deben pagarse:
+      // - cobrado = 0.00 (no pagadas)
+      // - estado NO sea: pagado, anulado, anulada
+      const estadosIgnorar = ['pagado', 'anulado', 'anulada', 'cancelado', 'cancelada'];
+      const facturasPendientes = data.facturas.filter(f => 
+        parseFloat(f.cobrado) === 0 &&
+        !estadosIgnorar.includes(f.estado?.toLowerCase())
+      );
+      console.log(`📋 [FACTURAS] Cliente ${idcliente}: ${data.facturas.length} total | ${facturasPendientes.length} pendientes`);
+      return facturasPendientes;
     }
+    console.log(`📋 [FACTURAS] Cliente ${idcliente}: sin facturas`);
     return [];
   } catch (err) {
-    console.error('❌ [FAKTURAS] Error obteniendo facturas:', err.message);
+    console.error('❌ [FACTURAS] Error:', err.message);
     return [];
   }
 }
@@ -498,7 +510,7 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.2 (Fix error HTTP 400)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.4 (Fix filtro facturas)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi, postgresql] = await Promise.all([
@@ -509,7 +521,7 @@ app.get('/health', async (req, res) => {
   const listaNegra = await contarListaNegra();
   res.json({
     estado_general: '✅',
-    version: '7.2 (Fix error HTTP 400)',
+    version: '7.4 (Fix filtro facturas)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately, postgresql },
     pagos: { pendientes: pendientes.length, lista_negra: listaNegra },
     sesiones: { activas: sesionesClientes.size, ttl_minutos: 10 }
@@ -1330,7 +1342,7 @@ const PORT = process.env.PORT || 3000;
 async function iniciar() {
   await inicializarDB();
   app.listen(PORT, () => {
-    console.log(`🚀 FibraNet Webhook v7.2 (Fix error HTTP 400) en puerto ${PORT}`);
+    console.log(`🚀 FibraNet Webhook v7.4 (Fix filtro facturas) en puerto ${PORT}`);
     console.log(`📊 Promesa de Pago: ${DIAS_PROMESA} días`);
     console.log(`🗄️ PostgreSQL: ${process.env.DATABASE_URL ? 'Configurado ✅' : 'SIN CONFIGURAR ❌'}`);
     console.log(`🕐 Sesiones: 10 minutos`);
