@@ -1,17 +1,18 @@
 {
-  "name": "fibranet-webhook",
-  "version": "4.0.0",
-  "description": "Sistema de cobranza automatizada FibraNet",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "express": "^4.18.2",
-    "googleapis": "^140.0.0",
-    "node-fetch": "^2.7.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  }
+    "name": "fibranet-webhook",
+    "version": "7.0.0",
+    "description": "Sistema de cobranza automatizada FibraNet",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js"
+    },
+    "dependencies": {
+        "express": "^4.18.2",
+        "googleapis": "^140.0.0",
+        "node-fetch": "^2.7.0",
+        "pg": "^8.11.0"
+    },
+    "engines": {
+        "node": ">=18.0.0"
+    }
 }
