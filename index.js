@@ -498,7 +498,7 @@ function verificarMercately() {
 // ENDPOINTS BÁSICOS
 // ════════════════════════════════════════════════════════
 
-app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.0 (PostgreSQL + PromesaPago)' }));
+app.get('/', (req, res) => res.json({ estado: 'FibraNet Webhook activo ✅', version: '7.1 (Fix servicios por cliente)' }));
 
 app.get('/health', async (req, res) => {
   const [mikrowisp, mercatelyApi, postgresql] = await Promise.all([
@@ -509,7 +509,7 @@ app.get('/health', async (req, res) => {
   const listaNegra = await contarListaNegra();
   res.json({
     estado_general: '✅',
-    version: '7.0 (PostgreSQL + PromesaPago)',
+    version: '7.1 (Fix servicios por cliente)',
     servicios: { mikrowisp, mercately_api: mercatelyApi, mercately_chatbot: mercately, postgresql },
     pagos: { pendientes: pendientes.length, lista_negra: listaNegra },
     sesiones: { activas: sesionesClientes.size, ttl_minutos: 10 }
@@ -862,35 +862,61 @@ app.post('/cliente/plan', async (req, res) => {
     if (!resultado?.exito) return res.json({ mensaje: '❌ No se encontró información del cliente.' });
 
     const clientes = resultado.clientes;
+
+    // v7.1: Fix servicios correctos por cliente
+    // MikroWisp repite servicios entre clientes
+    // Solución: Para cada cliente, usar el servicio con ID más alto (el propio de ese cliente)
+    // Y filtrar servicios que ya aparecieron en clientes anteriores
+    
     const clientesVistos = new Set();
+    const serviciosYaAsignados = new Set();
     const clientesUnicos = [];
-    clientes.forEach(c => {
-      if (!clientesVistos.has(c.id)) { clientesVistos.add(c.id); clientesUnicos.push(c); }
+
+    clientes.forEach(cliente => {
+      if (!clientesVistos.has(cliente.id)) {
+        clientesVistos.add(cliente.id);
+        
+        // Filtrar servicios que ya fueron asignados a otro cliente
+        const serviciosPropios = (cliente.servicios || []).filter(s => !serviciosYaAsignados.has(s.id));
+        
+        if (serviciosPropios.length > 0) {
+          // Usar el servicio con ID más alto (el más reciente = el real de este cliente)
+          const servicioReal = serviciosPropios.reduce((max, s) => s.id > max.id ? s : max, serviciosPropios[0]);
+          serviciosYaAsignados.add(servicioReal.id);
+          clientesUnicos.push({ ...cliente, servicioReal });
+        } else {
+          // Si todos los servicios ya fueron asignados, usar el de mayor ID
+          const servicios = cliente.servicios || [];
+          if (servicios.length > 0) {
+            const servicioReal = servicios.reduce((max, s) => s.id > max.id ? s : max, servicios[0]);
+            clientesUnicos.push({ ...cliente, servicioReal });
+          }
+        }
+      }
     });
 
     console.log(`📡 [PLAN] Clientes únicos: ${clientesUnicos.length}`);
 
     if (clientesUnicos.length === 1) {
       const cliente = clientesUnicos[0];
-      const plan = cliente.servicios?.[0]?.perfil || 'N/A';
-      const costo = cliente.servicios?.[0]?.costo || '0.00';
+      const servicio = cliente.servicioReal;
       const estadoIcon = cliente.estado === 'ACTIVO' ? '🟢' : '🔴';
       const estadoTexto = cliente.estado === 'ACTIVO' ? 'CONECTADO' : cliente.estado;
       return res.json({
-        mensaje: `📡 *Información de su servicio*\n\n👤 ${cliente.nombre.trim()}\n📋 Plan: *${plan}*\n💰 Costo mensual: $${costo}/mes\n${estadoIcon} Estado: *${estadoTexto}*`
+        mensaje: `📡 *Información de su servicio*\n\n👤 ${cliente.nombre.trim()}\n📋 Plan: *${servicio.perfil}*\n💰 Costo mensual: $${servicio.costo}/mes\n${estadoIcon} Estado: *${estadoTexto}*`
       });
     } else {
       let mensaje = `📡 *Sus servicios contratados*\n`;
       clientesUnicos.forEach((cliente, index) => {
-        const plan = cliente.servicios?.[0]?.perfil || 'N/A';
-        const costo = cliente.servicios?.[0]?.costo || '0.00';
+        const servicio = cliente.servicioReal;
         const estadoIcon = cliente.estado === 'ACTIVO' ? '🟢' : '🔴';
         const estadoTexto = cliente.estado === 'ACTIVO' ? 'CONECTADO' : cliente.estado;
-        mensaje += `\n${index + 1}. *${cliente.nombre.trim()}*\n   📋 ${plan}\n   💰 $${costo}/mes\n   ${estadoIcon} ${estadoTexto}\n`;
+        mensaje += `\n${index + 1}. *${cliente.nombre.trim()}*\n   📋 ${servicio.perfil}\n   💰 $${servicio.costo}/mes\n   ${estadoIcon} ${estadoTexto}\n`;
       });
       return res.json({ mensaje });
     }
   } catch (err) {
+    console.error('❌ [PLAN] Error:', err);
     res.status(500).json({ mensaje: '⚠️ Error del sistema.' });
   }
 });
@@ -1304,7 +1330,7 @@ const PORT = process.env.PORT || 3000;
 async function iniciar() {
   await inicializarDB();
   app.listen(PORT, () => {
-    console.log(`🚀 FibraNet Webhook v7.0 (PostgreSQL + PromesaPago) en puerto ${PORT}`);
+    console.log(`🚀 FibraNet Webhook v7.1 (Fix servicios por cliente) en puerto ${PORT}`);
     console.log(`📊 Promesa de Pago: ${DIAS_PROMESA} días`);
     console.log(`🗄️ PostgreSQL: ${process.env.DATABASE_URL ? 'Configurado ✅' : 'SIN CONFIGURAR ❌'}`);
     console.log(`🕐 Sesiones: 10 minutos`);
