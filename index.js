@@ -294,6 +294,23 @@ function capitalizarNombre(nombre) {
     .map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
 }
 
+function extraerCedula(texto) {
+  if (!texto) return '';
+
+  const limpio = String(texto).trim();
+
+  // Busca una cédula/RUC dentro de frases como:
+  // "Buenos días 1900834589", "1900834589 cedula", "1900464403 Juan Perez"
+  const coincidencia = limpio.match(/\b\d{10,13}\b/);
+  if (coincidencia) return coincidencia[0];
+
+  const soloNumeros = limpio.replace(/\D/g, '');
+  if (soloNumeros.length === 10 || soloNumeros.length === 13) return soloNumeros;
+
+  return limpio;
+}
+
+
 async function buscarClientePorCedula(cedula, useCache = true) {
   if (!cedula) return { exito: false, error: 'Cédula vacía' };
   if (useCache) {
@@ -660,11 +677,16 @@ app.post('/cliente/buscar', async (req, res) => {
   try {
     const { cedula, telefono, intento } = req.body;
     const numeroIntento = parseInt(intento || 1);
-    console.log(`📞 [BUSCAR] Cédula: "${cedula}" | Tel: ${telefono}`);
+    const cedulaLimpia = extraerCedula(cedula);
+    
+    console.log(`📞 [BUSCAR] Texto recibido: "${cedula}" | Cédula limpia: "${cedulaLimpia}" | Tel: ${telefono}`);
+    
+    if (!cedulaLimpia) {
+      return res.json({ encontrado: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
+    }
+    
+    const resultado = await buscarClientePorCedula(cedulaLimpia);
 
-    if (!cedula) return res.json({ encontrado: false, mensaje: '⚠️ Por favor escríbeme tu número de cédula.' });
-
-    const resultado = await buscarClientePorCedula(cedula);
     if (!resultado.exito) {
       if (numeroIntento >= 2) {
         return res.json({
@@ -676,7 +698,7 @@ app.post('/cliente/buscar', async (req, res) => {
       return res.json({
         encontrado: false,
         transferir: false,
-        mensaje: `❌ No encontré ningún cliente con la cédula *${cedula}*.\n\n¿Deseas intentar con otra cédula o hablar con un asesor?`
+        mensaje: `❌ No encontré ningún cliente con la cédula *${cedulaLimpia}*.\n\n¿Deseas intentar con otra cédula o hablar con un asesor?`
       });
     }
 
@@ -702,7 +724,7 @@ app.post('/cliente/buscar', async (req, res) => {
       if (sesionExistente) tieneSesionActiva = true;
     }
 
-    if (telefono) guardarSesion(telefono, cedula, nombreCompleto, clientesUnicos);
+    if (telefono) guardarSesion(telefono, cedulaLimpia, nombreCompleto, clientesUnicos);
 
     const mensajeBienvenida = tieneSesionActiva
       ? `📋 ¿En qué más podemos ayudarle?`
@@ -712,12 +734,13 @@ app.post('/cliente/buscar', async (req, res) => {
       encontrado: true,
       id: primerCliente.id,
       nombre: nombreCompleto,
-      cedula,
+      cedula: cedulaLimpia,
       deuda: deudaTotal,
       facturasPendientes: facturasTotal,
       plan: clientesUnicos.length > 1 ? `${clientesUnicos.length} servicios` : (clientesUnicos[0].servicios?.[0]?.perfil || 'N/A'),
       mensaje: mensajeBienvenida
     });
+
   } catch (err) {
     console.error('❌ [BUSCAR] Error:', err);
     res.status(500).json({ encontrado: false, transferir: true, mensaje: '⚠️ Error del sistema.' });
